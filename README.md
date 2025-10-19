@@ -1,1 +1,1 @@
-Smith Waterman in c and SIMD.
+Smith Waterman in C and SIMD.
