@@ -135,6 +135,7 @@ void swimd_list_directories(const char* root_dir,
 
     FindClose(h_find);
 }
+
 void swimd_list_directories_folders_free(Swimd_Folder_Struct* root_folder) {
     for (int i = 0; i < root_folder->folder_lst.length; i++) {
         Swimd_Folder_Struct* folder = root_folder->folder_lst.arr[i];
@@ -144,6 +145,7 @@ void swimd_list_directories_folders_free(Swimd_Folder_Struct* root_folder) {
         free(folder);
     }
 }
+
 void swimd_list_directories_free(const Swimd_File_List* lst, 
         Swimd_Folder_Struct* root_folder) {
     swimd_list_directories_folders_free(root_folder);
@@ -174,8 +176,8 @@ int main() {
 
     swimd_filelist_init(&lst);
     swimd_folders_init(&root.folder_lst);
-    const char* rootDir = "c:\\temp";
-    swimd_list_directories(rootDir, &lst, &root);
+    const char* root_path = "c:\\temp";
+    swimd_list_directories(root_path, &lst, &root);
 
     for (int i = 0; i < lst.length; i++) {
         printf("%d |%s|\n", i, lst.arr[i].name);
