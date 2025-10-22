@@ -4,114 +4,189 @@
 
 #define MAX_PATH_LENGTH 300
 
+typedef struct Swimd_Folder_Struct Swimd_Folder_Struct;
+
 typedef struct {
-    char** paths;
+    Swimd_Folder_Struct** arr;
     int length;
     int capacity;
-} FileList;
+} Swimd_Folder_Struct_List;
 
-void swimd_filelist_init(FileList *lst) {
-    int defaultSize = 4;
-    lst->paths = malloc(defaultSize * sizeof(char*));
+typedef struct Swimd_Folder_Struct
+{
+    char* name;
+    Swimd_Folder_Struct_List folder_lst;
+    struct Swimd_Folder_Struct* parent;
+} Swimd_Folder_Struct;
+
+typedef struct {
+    char* name;
+    Swimd_Folder_Struct* folder;
+} Swimd_File;
+
+typedef struct {
+    Swimd_File* arr;
+    int length;
+    int capacity;
+} Swimd_File_List;
+
+void swimd_folders_init(Swimd_Folder_Struct_List* lst) {
+    int default_size = 4;
+    lst->arr = malloc(default_size * sizeof(Swimd_Folder_Struct*));
     lst->length = 0;
-    lst->capacity = defaultSize;
+    lst->capacity = default_size;
 }
 
-void swimd_filelist_append(FileList* lst, char* path) {
+void swimd_folders_append(Swimd_Folder_Struct_List* lst, Swimd_Folder_Struct* folder) {
     if (lst->length == lst->capacity) {
         lst->capacity = lst->capacity * 2;
-        lst->paths = realloc(lst->paths, lst->capacity * sizeof(char*));
+        lst->arr = realloc(lst->arr, lst->capacity * sizeof(Swimd_Folder_Struct*));
     }
-    lst->paths[lst->length] = path;
+    lst->arr[lst->length] = folder;
     lst->length++;
 }
 
-void swimd_filelist_free(FileList* lst) {
-    free(lst->paths);
+void swimd_folders_free(Swimd_Folder_Struct_List* lst) {
+    free(lst->arr);
 }
 
-void swimd_list_directories(const char* rootDir, FileList* fileList) {
-    char rootMask[MAX_PATH_LENGTH];
-    char innerFolder[MAX_PATH_LENGTH];
-    strcpy(rootMask, rootDir);
-    strcat(rootMask, "\\*");
+void swimd_filelist_init(Swimd_File_List* lst) {
+    int default_size = 4;
+    lst->arr = malloc(default_size * sizeof(Swimd_File));
+    lst->length = 0;
+    lst->capacity = default_size;
+}
 
+void swimd_filelist_append(Swimd_File_List* lst, Swimd_File file) {
+    if (lst->length == lst->capacity) {
+        lst->capacity = lst->capacity * 2;
+        lst->arr = realloc(lst->arr, lst->capacity * sizeof(Swimd_File));
+    }
+    lst->arr[lst->length] = file;
+    lst->length++;
+    if (lst->length % 10000 == 0)
+        printf("lst->length = %d\n", lst->length);
+}
 
-    WIN32_FIND_DATA findFileData;
-    HANDLE hFind;
+void swimd_filelist_free(Swimd_File_List* lst) {
+    free(lst->arr);
+}
 
-    hFind = FindFirstFile(rootMask, &findFileData);
+void swimd_list_directories(const char* root_dir, 
+        Swimd_File_List* file_list, 
+        Swimd_Folder_Struct* root_folder) {
 
-    if (hFind == INVALID_HANDLE_VALUE) {
+    char root_mask[MAX_PATH_LENGTH];
+    char inner_folder[MAX_PATH_LENGTH];
+
+    strcpy(root_mask, root_dir);
+    strcat(root_mask, "\\*");
+
+    WIN32_FIND_DATA find_file_data;
+    HANDLE h_find;
+
+    h_find = FindFirstFile(root_mask, &find_file_data);
+
+    if (h_find == INVALID_HANDLE_VALUE) {
         printf("FindFirstFile failed (%lu)\n", GetLastError());
         return;
     } 
 
     do {
-        const char* currentFile = findFileData.cFileName;
+        const char* current_file = find_file_data.cFileName;
+        int current_file_len = strlen(current_file);
 
-        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            if (strcmp(currentFile, ".") != 0 && strcmp(currentFile, "..") != 0) {
+        if (find_file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (strcmp(current_file, ".") != 0 && strcmp(current_file, "..") != 0) {
+                char* folder_name = malloc((current_file_len + 1) * sizeof(char));
+                strcpy(folder_name, current_file);
 
-                strcpy(innerFolder, rootDir);
-                strcat(innerFolder, "\\");
-                strcat(innerFolder, currentFile);
+                Swimd_Folder_Struct* folder_node = malloc(sizeof(Swimd_Folder_Struct));
 
-                swimd_list_directories(innerFolder, fileList);
+                folder_node->name = folder_name;
+                folder_node->parent = root_folder;
+
+                swimd_folders_init(&folder_node->folder_lst);
+                swimd_folders_append(&root_folder->folder_lst, folder_node);
+
+                strcpy(inner_folder, root_dir);
+                strcat(inner_folder, "\\");
+                strcat(inner_folder, current_file);
+
+                swimd_list_directories(inner_folder, file_list, folder_node);
             }
         } else {
-            char* fullPath = malloc(MAX_PATH_LENGTH * sizeof(char*));
+            char* file_name = malloc((current_file_len + 1) * sizeof(char));
+            strcpy(file_name, current_file);
 
-            strcpy(fullPath, rootDir);
-            strcat(fullPath, "\\");
-            strcat(fullPath, currentFile);
+            Swimd_File file_node = {
+                .name = file_name,
+                .folder = root_folder
+            };
 
-            swimd_filelist_append(fileList, fullPath);
+            swimd_filelist_append(file_list, file_node);
         }
-    } while (FindNextFile(hFind, &findFileData) != 0);
+    } while (FindNextFile(h_find, &find_file_data) != 0);
 
-    DWORD dwError = GetLastError();
-    if (dwError != ERROR_NO_MORE_FILES) {
-        printf("FindNextFile error (%lu)\n", dwError);
+    DWORD dw_error = GetLastError();
+    if (dw_error != ERROR_NO_MORE_FILES) {
+        printf("FindNextFile error (%lu)\n", dw_error);
     }
 
-    FindClose(hFind);
+    FindClose(h_find);
 }
-
-void swimd_list_directories_free(const FileList* lst) {
+void swimd_list_directories_folders_free(Swimd_Folder_Struct* root_folder) {
+    for (int i = 0; i < root_folder->folder_lst.length; i++) {
+        Swimd_Folder_Struct* folder = root_folder->folder_lst.arr[i];
+        swimd_list_directories_folders_free(folder);
+        swimd_folders_free(&folder->folder_lst);
+        free(folder->name);
+        free(folder);
+    }
+}
+void swimd_list_directories_free(const Swimd_File_List* lst, 
+        Swimd_Folder_Struct* root_folder) {
+    swimd_list_directories_folders_free(root_folder);
     for (int i = 0; i < lst->length; i++) {
-        free(lst->paths[i]);
+        free(lst->arr[i].name);
     }
 }
 
 void swimd_vec_sum() {
-    short a[8] = {1,2,3,4,5,6,7,8};
-    short b[8] = {10,20,30,40,50,60,70,80};
-    short c[8];
+    short a[16] = {1,2,3,4,5,6,7,8, 1,2,3,4,5,6,7,8};
+    short b[16] = {10,20,30,40,50,60,70,80, 10,20,30,40,50,60,70,80};
+    short c[16];
 
-    __m128i vec_a = _mm_loadu_si128((__m128i*)a);
-    __m128i vec_b = _mm_loadu_si128((__m128i*)b);
-    __m128i vec_c = _mm_add_epi16(vec_a, vec_b);
-    _mm_storeu_si128((__m128i*)c, vec_c);
+    __m256i va = _mm256_loadu_si256((__m256i const*)a);
+    __m256i vb = _mm256_loadu_si256((__m256i const*)b);
+    __m256i vsum = _mm256_add_epi16(va, vb);
+    _mm256_storeu_si256((__m256i*)&c[0], vsum);
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 16; i++) {
         printf("%d ", c[i]);
     }
     printf("\n");
 }
 
 int main() {
-    // FileList lst = {0};
-    // swimd_filelist_init(&lst);
-    // swimd_list_directories("c:\\temp", &lst);
-    //
-    // for (int i = 0; i < lst.length; i++) {
-    //     printf("%s\n", lst.paths[i]);
-    // }
-    //
-    // swimd_list_directories_free(&lst);
-    //
-    // swimd_filelist_free(&lst);
-    //
-    // return 0;
+    Swimd_File_List lst = {0};
+    Swimd_Folder_Struct root = {0};
+
+    swimd_filelist_init(&lst);
+    swimd_folders_init(&root.folder_lst);
+    const char* rootDir = "c:\\temp";
+    swimd_list_directories(rootDir, &lst, &root);
+
+    for (int i = 0; i < lst.length; i++) {
+        printf("%d |%s|\n", i, lst.arr[i].name);
+    }
+    printf("over %d\n", lst.length);
+    // getchar();
+
+    swimd_list_directories_free(&lst, &root);
+    swimd_folders_free(&root.folder_lst);
+
+    swimd_filelist_free(&lst);
+
+    return 0;
 }
