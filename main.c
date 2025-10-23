@@ -3,6 +3,11 @@
 #include "windows.h"
 
 #define MAX_PATH_LENGTH 300
+#define LANES_COUNT_SHORT 16
+
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#define CEIL_DIV(a,b) ((a) % (b) == 0 ? ((a)/(b)) : ((a)/(b)) + 1)
 
 typedef struct Swimd_Folder_Struct Swimd_Folder_Struct;
 
@@ -15,12 +20,14 @@ typedef struct {
 typedef struct Swimd_Folder_Struct
 {
     char* name;
+    int name_len;
     Swimd_Folder_Struct_List folder_lst;
     struct Swimd_Folder_Struct* parent;
 } Swimd_Folder_Struct;
 
 typedef struct {
     char* name;
+    int name_len;
     Swimd_Folder_Struct* folder;
 } Swimd_File;
 
@@ -29,6 +36,27 @@ typedef struct {
     int length;
     int capacity;
 } Swimd_File_List;
+
+typedef short Swimd_Algo_Matrix[MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT];
+
+typedef struct {
+    short* arr;
+    int length;
+} Swimd_File_Vec;
+
+typedef struct {
+    char* needle;
+    short* needle_vec;
+
+    Swimd_File_List files;
+    Swimd_File_Vec* files_vec;
+
+    Swimd_Folder_Struct folders;
+    short* scores;
+    Swimd_Algo_Matrix d_vec;
+} Swimd_Algo_State;
+
+static Swimd_Algo_State swimd_state = {0};
 
 void swimd_folders_init(Swimd_Folder_Struct_List* lst) {
     int default_size = 4;
@@ -104,6 +132,7 @@ void swimd_list_directories(const char* root_dir,
                 Swimd_Folder_Struct* folder_node = malloc(sizeof(Swimd_Folder_Struct));
 
                 folder_node->name = folder_name;
+                folder_node->name_len = current_file_len;
                 folder_node->parent = root_folder;
 
                 swimd_folders_init(&folder_node->folder_lst);
@@ -121,6 +150,7 @@ void swimd_list_directories(const char* root_dir,
 
             Swimd_File file_node = {
                 .name = file_name,
+                .name_len = current_file_len,
                 .folder = root_folder
             };
 
@@ -154,6 +184,42 @@ void swimd_list_directories_free(const Swimd_File_List* lst,
     }
 }
 
+void swimd_prep_files_vec(Swimd_Algo_State* state) {
+    Swimd_File_List files = state->files;
+    int files_length = files.length;
+    int files_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
+    Swimd_File_Vec* files_vec = malloc(files_vec_length * sizeof(Swimd_File_Vec));
+
+    for (int i = 0; i < files_vec_length; i++) {
+        int max_length = 0;
+        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+            if (i * LANES_COUNT_SHORT + j >= files_length)
+                break;
+            max_length = MAX(max_length, files.arr[i * LANES_COUNT_SHORT + j].name_len);
+        }
+
+        int file_vec_length = max_length * LANES_COUNT_SHORT;
+        short* file_vec_arr = malloc(file_vec_length * sizeof(short));
+        memset(file_vec_arr, 0, file_vec_length * sizeof(short));
+
+        for (int k = 0; k < max_length; k++) {
+            for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+                if (i * LANES_COUNT_SHORT + j >= files_length)
+                    break;
+                Swimd_File file = files.arr[i * LANES_COUNT_SHORT + j];
+                if (k >= file.name_len)
+                    continue;
+                file_vec_arr[k * LANES_COUNT_SHORT + j] = (short)file.name[k];
+            }
+        }
+        files_vec[i] = (Swimd_File_Vec){
+            .arr = file_vec_arr,
+            .length = file_vec_length,
+        };
+    }
+    state->files_vec = files_vec;
+}
+
 void swimd_vec_sum() {
     short a[16] = {1,2,3,4,5,6,7,8, 1,2,3,4,5,6,7,8};
     short b[16] = {10,20,30,40,50,60,70,80, 10,20,30,40,50,60,70,80};
@@ -170,25 +236,48 @@ void swimd_vec_sum() {
     printf("\n");
 }
 
+void swimd_init_state(const char* root_path) {
+    swimd_filelist_init(&swimd_state.files);
+    swimd_folders_init(&swimd_state.folders.folder_lst);
+    swimd_list_directories(root_path, 
+        &swimd_state.files, 
+        &swimd_state.folders);
+
+    printf("over %d\n", swimd_state.files.length);
+    swimd_prep_files_vec(&swimd_state);
+
+    // for (int i = 0; i < swimd_state.files.length; i++) {
+    //     printf("%d |%s|\n", i, swimd_state.files.arr[i].name);
+    // }
+    printf("over %d\n", swimd_state.files.length);
+    // for (int i = 0; i < swimd_state.files.length / LANES_COUNT_SHORT; i++) {
+    //     printf("%d |%s|\n", i, swimd_state.files.arr[i].name);
+    // }
+    // printf("over %d\n", swimd_state.files.length);
+}
+
 int main() {
-    Swimd_File_List lst = {0};
-    Swimd_Folder_Struct root = {0};
-
-    swimd_filelist_init(&lst);
-    swimd_folders_init(&root.folder_lst);
     const char* root_path = "c:\\temp";
-    swimd_list_directories(root_path, &lst, &root);
-
-    for (int i = 0; i < lst.length; i++) {
-        printf("%d |%s|\n", i, lst.arr[i].name);
-    }
-    printf("over %d\n", lst.length);
-    // getchar();
-
-    swimd_list_directories_free(&lst, &root);
-    swimd_folders_free(&root.folder_lst);
-
-    swimd_filelist_free(&lst);
+    swimd_init_state(root_path);
+    // Swimd_File_List lst = {0};
+    // Swimd_Folder_Struct root = {0};
+    //
+    // swimd_filelist_init(&lst);
+    // swimd_folders_init(&root.folder_lst);
+    // const char* root_path = "c:\\temp";
+    // swimd_list_directories(root_path, &lst, &root);
+    //
+    // swimd_prep_files_vec(&swimd_state);
+    //
+    // for (int i = 0; i < lst.length; i++) {
+    //     printf("%d |%s|\n", i, lst.arr[i].name);
+    // }
+    // printf("over %d\n", lst.length);
+    //
+    // swimd_list_directories_free(&lst, &root);
+    // swimd_folders_free(&root.folder_lst);
+    //
+    // swimd_filelist_free(&lst);
 
     return 0;
 }
