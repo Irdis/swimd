@@ -279,19 +279,45 @@ void swimd_prep_d_vec(Swimd_Algo_State* state) {
 }
 
 void swimd_vec_sum() {
-    short a[16] = {1,2,3,4,5,6,7,8, 1,2,3,4,5,6,7,8};
-    short b[16] = {10,20,30,40,50,60,70,80, 10,20,30,40,50,60,70,80};
+    short a[16] = {1,2,3,4,5,6,7,8, 1,2,3,4,5,6,7,80};
+    short b[16] = {1,20,30,40,50,60,70,80, 10,20,30,40,50,60,70,80};
     short c[16];
+    short diag[16] = {0, 0, 0, 0, 1, 1, 2, 2, 0, 0, 0, 0, -1, -1, -1, -1};
+    short up[16] = {1, 1, 1, 1, 10, 10, 10, 10, 5, 5, 5, 5, -1, -1, -1, -1};
+    short left[16] = {0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, -1, -1, -1, -1};
+
+    __m256i sub_pen = _mm256_set1_epi16(-SUB_PENALTY);
+    __m256i eq_reward = _mm256_set1_epi16(SUB_PENALTY);
+    __m256i gap = _mm256_set1_epi16(GAP_PENALTY);
 
     __m256i va = _mm256_loadu_si256((__m256i const*)a);
     __m256i vb = _mm256_loadu_si256((__m256i const*)b);
-    __m256i vsum = _mm256_add_epi16(va, vb);
-    _mm256_storeu_si256((__m256i*)&c[0], vsum);
+    __m256i vdiag = _mm256_loadu_si256((__m256i const*)diag);
+    __m256i vup = _mm256_loadu_si256((__m256i const*)up);
+    __m256i vleft = _mm256_loadu_si256((__m256i const*)left);
+
+    __m256i veq = _mm256_cmpeq_epi16(va, vb);
+    __m256i c1 = _mm256_and_si256(eq_reward, veq);
+    __m256i c2 = _mm256_andnot_si256(veq, sub_pen); // flipped
+    __m256i o1 = _mm256_add_epi16(c1, c2);
+    o1 = _mm256_add_epi16(o1, vdiag);
+
+    __m256i o2 = _mm256_sub_epi16(vup, gap);
+    __m256i o3 = _mm256_sub_epi16(vleft, gap);
+
+    __m256i o = _mm256_max_epi16(o1, o2);
+    o = _mm256_max_epi16(o, o3);
+
+    _mm256_storeu_si256((__m256i*)c, o);
 
     for (int i = 0; i < 16; i++) {
         printf("%d ", c[i]);
     }
     printf("\n");
+}
+
+void swimd_vec_estimate() {
+
 }
 
 void swimd_state_init(const char* root_path) {
@@ -314,15 +340,16 @@ void swimd_state_free() {
 }
 
 int main() {
-    const char* root_path = "c:\\temp";
-    while (1) {
-        swimd_state_init(root_path);
-        swimd_setup_needle("hello");
-
-        swimd_setup_needle_free();
-        swimd_state_free();
-
-        getchar();
-    }
-    return 0;
+    swimd_vec_sum();
+    // const char* root_path = "c:\\temp";
+    // while (1) {
+    //     swimd_state_init(root_path);
+    //     swimd_setup_needle("hello");
+    //
+    //     swimd_setup_needle_free();
+    //     swimd_state_free();
+    //
+    //     getchar();
+    // }
+    // return 0;
 }
