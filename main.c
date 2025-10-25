@@ -6,6 +6,7 @@
 #define LANES_COUNT_SHORT 16
 #define GAP_PENALTY 3
 #define SUB_PENALTY 2
+#define Vector __m256i
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -105,8 +106,8 @@ void swimd_filelist_free(Swimd_File_List* lst) {
     free(lst->arr);
 }
 
-void swimd_list_directories(const char* root_dir, 
-        Swimd_File_List* file_list, 
+void swimd_list_directories(const char* root_dir,
+        Swimd_File_List* file_list,
         Swimd_Folder_Struct* root_folder) {
 
     char root_mask[MAX_PATH_LENGTH];
@@ -123,7 +124,7 @@ void swimd_list_directories(const char* root_dir,
     if (h_find == INVALID_HANDLE_VALUE) {
         printf("FindFirstFile failed (%lu)\n", GetLastError());
         return;
-    } 
+    }
 
     do {
         const char* current_file = find_file_data.cFileName;
@@ -181,7 +182,7 @@ void swimd_list_directories_folders_free(Swimd_Folder_Struct* root_folder) {
     }
 }
 
-void swimd_list_directories_free(const Swimd_File_List* lst, 
+void swimd_list_directories_free(const Swimd_File_List* lst,
         Swimd_Folder_Struct* root_folder) {
     swimd_list_directories_folders_free(root_folder);
     for (int i = 0; i < lst->length; i++) {
@@ -286,26 +287,26 @@ void swimd_vec_sum() {
     short up[16] = {1, 1, 1, 1, 10, 10, 10, 10, 5, 5, 5, 5, -1, -1, -1, -1};
     short left[16] = {0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, -1, -1, -1, -1};
 
-    __m256i sub_pen = _mm256_set1_epi16(-SUB_PENALTY);
-    __m256i eq_reward = _mm256_set1_epi16(SUB_PENALTY);
-    __m256i gap = _mm256_set1_epi16(GAP_PENALTY);
+    Vector sub_pen = _mm256_set1_epi16(-SUB_PENALTY);
+    Vector eq_reward = _mm256_set1_epi16(SUB_PENALTY);
+    Vector gap = _mm256_set1_epi16(GAP_PENALTY);
 
-    __m256i va = _mm256_loadu_si256((__m256i const*)a);
-    __m256i vb = _mm256_loadu_si256((__m256i const*)b);
-    __m256i vdiag = _mm256_loadu_si256((__m256i const*)diag);
-    __m256i vup = _mm256_loadu_si256((__m256i const*)up);
-    __m256i vleft = _mm256_loadu_si256((__m256i const*)left);
+    Vector va = _mm256_loadu_si256((__m256i const*)a);
+    Vector vb = _mm256_loadu_si256((__m256i const*)b);
+    Vector vdiag = _mm256_loadu_si256((__m256i const*)diag);
+    Vector vup = _mm256_loadu_si256((__m256i const*)up);
+    Vector vleft = _mm256_loadu_si256((__m256i const*)left);
 
-    __m256i veq = _mm256_cmpeq_epi16(va, vb);
-    __m256i c1 = _mm256_and_si256(eq_reward, veq);
-    __m256i c2 = _mm256_andnot_si256(veq, sub_pen); // flipped
-    __m256i o1 = _mm256_add_epi16(c1, c2);
+    Vector veq = _mm256_cmpeq_epi16(va, vb);
+    Vector c1 = _mm256_and_si256(eq_reward, veq);
+    Vector c2 = _mm256_andnot_si256(veq, sub_pen); // flipped
+    Vector o1 = _mm256_add_epi16(c1, c2);
     o1 = _mm256_add_epi16(o1, vdiag);
 
-    __m256i o2 = _mm256_sub_epi16(vup, gap);
-    __m256i o3 = _mm256_sub_epi16(vleft, gap);
+    Vector o2 = _mm256_sub_epi16(vup, gap);
+    Vector o3 = _mm256_sub_epi16(vleft, gap);
 
-    __m256i o = _mm256_max_epi16(o1, o2);
+    Vector o = _mm256_max_epi16(o1, o2);
     o = _mm256_max_epi16(o, o3);
 
     _mm256_storeu_si256((__m256i*)c, o);
@@ -323,8 +324,8 @@ void swimd_vec_estimate() {
 void swimd_state_init(const char* root_path) {
     swimd_filelist_init(&swimd_state.files);
     swimd_folders_init(&swimd_state.folders.folder_lst);
-    swimd_list_directories(root_path, 
-        &swimd_state.files, 
+    swimd_list_directories(root_path,
+        &swimd_state.files,
         &swimd_state.folders);
 
     swimd_prep_files_vec(&swimd_state);
@@ -333,7 +334,7 @@ void swimd_state_init(const char* root_path) {
 
 void swimd_state_free() {
     swimd_prep_files_vec_free(&swimd_state);
-    swimd_list_directories_free(&swimd_state.files, 
+    swimd_list_directories_free(&swimd_state.files,
             &swimd_state.folders);
     swimd_folders_free(&swimd_state.folders.folder_lst);
     swimd_filelist_free(&swimd_state.files);
