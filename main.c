@@ -1,6 +1,7 @@
 #include "immintrin.h"
 #include "stdio.h"
 #include "windows.h"
+#include "limits.h"
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
@@ -59,6 +60,7 @@ typedef struct {
 
     Swimd_Folder_Struct folders;
     short* scores;
+    int scores_length;
     Swimd_Algo_Matrix d_vec;
 } Swimd_Algo_State;
 
@@ -317,8 +319,84 @@ void swimd_vec_sum() {
     printf("\n");
 }
 
-void swimd_vec_estimate() {
+void swimd_vec_estimate(Swimd_Algo_Matrix* d,
+    short* a, 
+    int a_len, 
+    short* b,
+    int b_len, 
+    int pos,
+    short* scores
+) {
+    int n = a_len / LANES_COUNT_SHORT + 1;
+    int m = b_len / LANES_COUNT_SHORT + 1;
 
+    Vector sub_pen = _mm256_set1_epi16(-SUB_PENALTY);
+    Vector eq_reward = _mm256_set1_epi16(SUB_PENALTY);
+    Vector gap_pen = _mm256_set1_epi16(GAP_PENALTY);
+
+    Vector res = _mm256_set1_epi16(SHRT_MIN);
+    for (int i = 1; i < n; i++) {
+        Vector va = _mm256_loadu_si256((__m256i const*)&a[LANES_COUNT_SHORT * (i - 1)]);
+        for (int j = 1; j < m; j++) {
+            Vector vb = _mm256_loadu_si256((__m256i const*)&b[LANES_COUNT_SHORT * (j - 1)]);
+            Vector vdiag = _mm256_loadu_si256((__m256i const*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) + 
+                    LANES_COUNT_SHORT * (j - 1)
+            ]);
+            Vector vup = _mm256_loadu_si256((__m256i const*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i + 
+                    LANES_COUNT_SHORT * (j - 1)
+            ]);
+            Vector vleft = _mm256_loadu_si256((__m256i const*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) + 
+                    LANES_COUNT_SHORT * j
+            ]);
+
+            Vector veq = _mm256_cmpeq_epi16(va, vb);
+            Vector c1 = _mm256_and_si256(eq_reward, veq);
+            Vector c2 = _mm256_andnot_si256(veq, sub_pen); // flipped
+            Vector o1 = _mm256_add_epi16(c1, c2);
+            o1 = _mm256_add_epi16(o1, vdiag);
+
+            Vector o2 = _mm256_sub_epi16(vup, gap_pen);
+            Vector o3 = _mm256_sub_epi16(vleft, gap_pen);
+
+            Vector o = _mm256_max_epi16(o1, o2);
+            o = _mm256_max_epi16(o, o3);
+            _mm256_storeu_si256((__m256i*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i + 
+                    LANES_COUNT_SHORT * j
+            ], o);
+            res = _mm256_max_epi16(res, o);
+
+        }
+    }
+    _mm256_storeu_si256((__m256i*)&scores[
+            pos * LANES_COUNT_SHORT
+    ], res);
+}
+
+void swimd_simd_scores() {
+    for (int i = 0; i < swimd_state.files_vec_length; i++) {
+        swimd_vec_estimate(
+            &swimd_state.d_vec,
+            swimd_state.needle_vec,
+            swimd_state.needle_vec_length,
+            swimd_state.files_vec[i].arr,
+            swimd_state.files_vec[i].length,
+            i,
+            swimd_state.scores
+        );
+    }
+}
+
+void swimd_scores_init(Swimd_Algo_State* state) {
+    state->scores = malloc(state->files_vec_length * LANES_COUNT_SHORT * sizeof(short));
+    state->scores_length = state->files_vec_length * LANES_COUNT_SHORT;
+}
+
+void swimd_scores_free(Swimd_Algo_State* state) {
+    free(state->scores);
 }
 
 void swimd_state_init(const char* root_path) {
@@ -330,9 +408,11 @@ void swimd_state_init(const char* root_path) {
 
     swimd_prep_files_vec(&swimd_state);
     swimd_prep_d_vec(&swimd_state);
+    swimd_scores_init(&swimd_state);
 }
 
 void swimd_state_free() {
+    swimd_scores_free(&swimd_state);
     swimd_prep_files_vec_free(&swimd_state);
     swimd_list_directories_free(&swimd_state.files,
             &swimd_state.folders);
@@ -341,16 +421,22 @@ void swimd_state_free() {
 }
 
 int main() {
-    swimd_vec_sum();
-    // const char* root_path = "c:\\temp";
-    // while (1) {
-    //     swimd_state_init(root_path);
-    //     swimd_setup_needle("hello");
-    //
-    //     swimd_setup_needle_free();
-    //     swimd_state_free();
-    //
-    //     getchar();
-    // }
-    // return 0;
+    // swimd_vec_sum();
+    const char* root_path = "c:\\temp";
+    while (1) {
+        swimd_state_init(root_path);
+        swimd_setup_needle("hello");
+
+        swimd_simd_scores();
+
+        for (int i = 0; i < 100; i++) {
+            printf("%i\n", swimd_state.scores[i]);
+        }
+
+        swimd_setup_needle_free();
+        swimd_state_free();
+
+        getchar();
+    }
+    return 0;
 }
