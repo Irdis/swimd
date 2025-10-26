@@ -13,6 +13,16 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define CEIL_DIV(a,b) ((a) % (b) == 0 ? ((a)/(b)) : ((a)/(b)) + 1)
 
+#define LEFT_HEAP(ind) (2*((ind) + 1) - 1)
+#define RIGHT_HEAP(ind) (2*((ind) + 1))
+#define PARENT_HEAP(ind) (((ind) - 1) / 2)
+#define SWAP(a, b, type) \
+    do {                 \
+        type temp = a;   \
+        a = b;           \
+        b = temp;        \
+    } while (0)
+
 typedef struct Swimd_Folder_Struct Swimd_Folder_Struct;
 
 typedef struct {
@@ -49,6 +59,17 @@ typedef struct {
 } Swimd_File_Vec;
 
 typedef struct {
+    int score;
+    int index;
+} Swimd_Scores_Heap_Item;
+
+typedef struct  {
+    Swimd_Scores_Heap_Item* arr;
+    int size;
+    int capacity;
+} Swimd_Scores_Heap;
+
+typedef struct {
     char* needle;
     int needle_length;
     short* needle_vec;
@@ -61,6 +82,9 @@ typedef struct {
     Swimd_Folder_Struct folders;
     short* scores;
     int scores_length;
+
+    Swimd_Scores_Heap scores_heap;
+
     Swimd_Algo_Matrix d_vec;
 } Swimd_Algo_State;
 
@@ -368,7 +392,6 @@ void swimd_vec_estimate(Swimd_Algo_Matrix* d,
                     LANES_COUNT_SHORT * j
             ], o);
             res = _mm256_max_epi16(res, o);
-
         }
     }
     _mm256_storeu_si256((__m256i*)&scores[
@@ -399,6 +422,76 @@ void swimd_scores_free(Swimd_Algo_State* state) {
     free(state->scores);
 }
 
+void swimd_scores_heap_init(Swimd_Scores_Heap* scores_heap, int capacity) {
+    scores_heap->arr = malloc(capacity * sizeof(Swimd_Scores_Heap_Item));
+    scores_heap->size = 0;
+    scores_heap->capacity = capacity;
+}
+
+void swimd_scores_heap_free(Swimd_Scores_Heap* scores_heap) {
+    free(scores_heap->arr);
+}
+
+void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
+    scores_heap->size--;
+    scores_heap->arr[0] = scores_heap->arr[scores_heap->size];
+
+    int ind = 0;
+    while (1) {
+        int left_ind = LEFT_HEAP(ind);
+        if (left_ind < scores_heap->size &&
+            scores_heap->arr[ind].score > scores_heap->arr[left_ind].score) {
+            SWAP(scores_heap->arr[ind], 
+                    scores_heap->arr[left_ind],
+                    Swimd_Scores_Heap_Item);
+            ind = left_ind;
+            continue;
+        }
+
+        int right_ind = RIGHT_HEAP(ind);
+        if (right_ind < scores_heap->size &&
+            scores_heap->arr[ind].score > scores_heap->arr[right_ind].score) {
+            SWAP(scores_heap->arr[ind], 
+                    scores_heap->arr[right_ind],
+                    Swimd_Scores_Heap_Item);
+            ind = right_ind;
+            continue;
+        }
+        break;
+    }
+}
+
+void swimd_scores_heap_insert(Swimd_Scores_Heap* scores_heap, Swimd_Scores_Heap_Item item) {
+    if (scores_heap->size == 0) {
+        scores_heap->size++;
+        scores_heap->arr[0] = item;
+        return;
+    }
+    if (scores_heap->size == scores_heap->capacity) {
+        if (scores_heap->arr[0].score >= item.score)
+        {
+            return;
+        }
+        swimd_scores_heap_cut_head(scores_heap);
+    }
+    scores_heap->arr[scores_heap->size] = item;
+    int ind = scores_heap->size;
+    scores_heap->size++;
+    while (1) {
+        if (ind <= 0)
+            break;
+        int parent_ind = PARENT_HEAP(ind);
+        if (scores_heap->arr[parent_ind].score > scores_heap-> arr[ind].score) {
+            SWAP(scores_heap->arr[parent_ind],
+                    scores_heap-> arr[ind],
+                    Swimd_Scores_Heap_Item);
+            ind = parent_ind;
+            continue;
+        }
+        break;
+    }
+}
+
 void swimd_state_init(const char* root_path) {
     swimd_filelist_init(&swimd_state.files);
     swimd_folders_init(&swimd_state.folders.folder_lst);
@@ -421,22 +514,48 @@ void swimd_state_free() {
 }
 
 int main() {
-    // swimd_vec_sum();
-    const char* root_path = "c:\\temp";
-    while (1) {
-        swimd_state_init(root_path);
-        swimd_setup_needle("hello");
-
-        swimd_simd_scores();
-
-        for (int i = 0; i < 100; i++) {
-            printf("%i\n", swimd_state.scores[i]);
-        }
-
-        swimd_setup_needle_free();
-        swimd_state_free();
-
-        getchar();
+    Swimd_Scores_Heap heap;
+    swimd_scores_heap_init(&heap, 3);
+    swimd_scores_heap_insert(&heap, (Swimd_Scores_Heap_Item){
+            .score = 1,
+            .index = 1
+    });
+    swimd_scores_heap_insert(&heap, (Swimd_Scores_Heap_Item){
+            .score = 2,
+            .index = 2
+    });
+    swimd_scores_heap_insert(&heap, (Swimd_Scores_Heap_Item){
+            .score = 4,
+            .index = 4
+    });
+    swimd_scores_heap_insert(&heap, (Swimd_Scores_Heap_Item){
+            .score = 5,
+            .index = 5
+    });
+    swimd_scores_heap_insert(&heap, (Swimd_Scores_Heap_Item){
+            .score = 0,
+            .index = 0
+    });
+    for (int i = 0; i < heap.size; i++) {
+        printf("%d\n", heap.arr[i].score);
     }
+    swimd_scores_heap_free(&heap);
+    // swimd_vec_sum();
+    // const char* root_path = "c:\\temp";
+    // while (1) {
+    //     swimd_state_init(root_path);
+    //     swimd_setup_needle("hello");
+    //
+    //     swimd_simd_scores();
+    //
+    //     for (int i = 0; i < 100; i++) {
+    //         printf("%i\n", swimd_state.scores[i]);
+    //     }
+    //
+    //     swimd_setup_needle_free();
+    //     swimd_state_free();
+    //
+    //     getchar();
+    // }
     return 0;
 }
