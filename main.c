@@ -14,6 +14,8 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define CEIL_DIV(a,b) ((a) % (b) == 0 ? ((a)/(b)) : ((a)/(b)) + 1)
 
+#define IS_ROOT_FOLDER(f) ((f)->parent == NULL)
+
 #define LEFT_HEAP(ind) (2*((ind) + 1) - 1)
 #define RIGHT_HEAP(ind) (2*((ind) + 1))
 #define PARENT_HEAP(ind) (((ind) - 1) / 2)
@@ -35,14 +37,14 @@ typedef struct {
 typedef struct Swimd_Folder_Struct
 {
     char* name;
-    int name_len;
+    int name_length;
     Swimd_Folder_Struct_List folder_lst;
     struct Swimd_Folder_Struct* parent;
 } Swimd_Folder_Struct;
 
 typedef struct {
     char* name;
-    int name_len;
+    int name_length;
     Swimd_Folder_Struct* folder;
 } Swimd_File;
 
@@ -165,7 +167,7 @@ void swimd_list_directories(const char* root_dir,
                 Swimd_Folder_Struct* folder_node = malloc(sizeof(Swimd_Folder_Struct));
 
                 folder_node->name = folder_name;
-                folder_node->name_len = current_file_len;
+                folder_node->name_length = current_file_len;
                 folder_node->parent = root_folder;
 
                 swimd_folders_init(&folder_node->folder_lst);
@@ -183,7 +185,7 @@ void swimd_list_directories(const char* root_dir,
 
             Swimd_File file_node = {
                 .name = file_name,
-                .name_len = current_file_len,
+                .name_length = current_file_len,
                 .folder = root_folder
             };
 
@@ -228,7 +230,7 @@ void swimd_prep_files_vec(Swimd_Algo_State* state) {
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
             if (i * LANES_COUNT_SHORT + j >= files_length)
                 break;
-            max_length = MAX(max_length, files.arr[i * LANES_COUNT_SHORT + j].name_len);
+            max_length = MAX(max_length, files.arr[i * LANES_COUNT_SHORT + j].name_length);
         }
 
         int file_vec_length = max_length * LANES_COUNT_SHORT;
@@ -240,7 +242,7 @@ void swimd_prep_files_vec(Swimd_Algo_State* state) {
                 if (i * LANES_COUNT_SHORT + j >= files_length)
                     break;
                 Swimd_File file = files.arr[i * LANES_COUNT_SHORT + j];
-                if (k >= file.name_len)
+                if (k >= file.name_length)
                     continue;
                 file_vec_arr[k * LANES_COUNT_SHORT + j] = (short)file.name[k];
             }
@@ -502,6 +504,32 @@ void swimd_state_free() {
     swimd_filelist_free(&swimd_state.files);
 }
 
+void swimd_str_reverse(char* buf, int buf_length) {
+    for (int i = 0; i < buf_length / 2; i++) {
+        SWAP(buf[i], buf[buf_length - i - 1], char);
+    }
+}
+
+void swimd_print_path(char* buf, Swimd_File* file) {
+    int buf_length = 0;
+    for (int i = 0; i < file->name_length; i++) {
+        buf[buf_length++] = file->name[file->name_length - i - 1];
+    }
+    buf[buf_length++] = '\\';
+    Swimd_Folder_Struct* cur_folder = file->folder;
+    while (1) {
+        for (int i = 0; i < cur_folder->name_length; i++) {
+            buf[buf_length++] = cur_folder->name[cur_folder->name_length - i - 1];
+        }
+        if (IS_ROOT_FOLDER(cur_folder))
+            break;
+        buf[buf_length++] = '\\';
+        cur_folder = cur_folder->parent;
+    }
+    swimd_str_reverse(buf, buf_length);
+    buf[buf_length++] = '\0';
+}
+
 int main() {
     const char* root_path = "c:\\temp";
     while (1) {
@@ -514,10 +542,13 @@ int main() {
         for (int i = 0; i < swimd_state.scores_heap.size; i++) {
             Swimd_Scores_Heap_Item heap_item = swimd_state.scores_heap.arr[i];
             Swimd_File file = swimd_state.files.arr[heap_item.index];
-            printf("ind = %d, score = %d, file = %s\n", 
+            char path[MAX_PATH_LENGTH];
+            swimd_print_path(path, &file);
+            printf("ind = %d, score = %d, file = %s path = %s\n", 
                     heap_item.index,
                     heap_item.score,
-                    file.name);
+                    file.name,
+                    path);
         }
 
         swimd_top_scores_free();
