@@ -3,6 +3,8 @@
 #include "windows.h"
 #include "limits.h"
 #include "stdlib.h"
+#include "lua.h"
+#include "lauxlib.h"
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
@@ -69,7 +71,7 @@ typedef struct {
 typedef struct  {
     Swimd_Scores_Heap_Item* arr;
     int size;
-    int capacity;
+    int max_size;
 } Swimd_Scores_Heap;
 
 typedef struct {
@@ -387,10 +389,10 @@ void swimd_scores_free(Swimd_Algo_State* state) {
     free(state->scores);
 }
 
-void swimd_scores_heap_init(Swimd_Scores_Heap* scores_heap, int capacity) {
-    scores_heap->arr = malloc(capacity * sizeof(Swimd_Scores_Heap_Item));
+void swimd_scores_heap_init(Swimd_Scores_Heap* scores_heap, int max_size) {
+    scores_heap->arr = malloc(max_size * sizeof(Swimd_Scores_Heap_Item));
     scores_heap->size = 0;
-    scores_heap->capacity = capacity;
+    scores_heap->max_size = max_size;
 }
 
 void swimd_scores_heap_free(Swimd_Scores_Heap* scores_heap) {
@@ -432,7 +434,7 @@ void swimd_scores_heap_insert(Swimd_Scores_Heap* scores_heap, Swimd_Scores_Heap_
         scores_heap->arr[0] = item;
         return;
     }
-    if (scores_heap->size == scores_heap->capacity) {
+    if (scores_heap->size == scores_heap->max_size) {
         if (scores_heap->arr[0].score >= item.score)
         {
             return;
@@ -465,8 +467,8 @@ int swimd_compare_heap_item(const void* a, const void* b) {
     return a_item->score > b_item->score ? 1 : -1;
 }
 
-void swimd_top_scores() {
-    swimd_scores_heap_init(&swimd_state.scores_heap, 10);
+void swimd_top_scores(int n) {
+    swimd_scores_heap_init(&swimd_state.scores_heap, n);
     for (int i = 0; i < swimd_state.files.length; i++) {
         swimd_scores_heap_insert(&swimd_state.scores_heap, (Swimd_Scores_Heap_Item){
                 .score = swimd_state.scores[i],
@@ -530,14 +532,30 @@ void swimd_print_path(char* buf, Swimd_File* file) {
     buf[buf_length++] = '\0';
 }
 
-int main() {
+static int l_add(lua_State *L) {
+    double a = luaL_checknumber(L, 1);
+    double b = luaL_checknumber(L, 2);
+    lua_pushnumber(L, a + b);
+    return 1;
+}
+
+__declspec(dllexport) int luaopen_swimd(lua_State *L) {
+    static const luaL_Reg funcs[] = {
+        {"add", l_add},
+        {NULL, NULL}
+    };
+    luaL_register(L, "swimd", funcs);
+    return 1;
+}
+
+void swimd_scenario_find_hello() {
     const char* root_path = "c:\\temp";
     while (1) {
         swimd_state_init(root_path);
-        swimd_setup_needle("hello");
+        swimd_setup_needle("controller");
 
         swimd_simd_scores();
-        swimd_top_scores();
+        swimd_top_scores(20);
 
         for (int i = 0; i < swimd_state.scores_heap.size; i++) {
             Swimd_Scores_Heap_Item heap_item = swimd_state.scores_heap.arr[i];
@@ -557,5 +575,9 @@ int main() {
 
         getchar();
     }
+}
+
+int main() {
+    swimd_scenario_find_hello();
     return 0;
 }
