@@ -22,16 +22,3 @@
 
 :: Link luac into an .exe
 @LINK /OUT:luac.exe luac.o lua-static.lib
-
-:: Move back up out of 'src'
-@POPD
-
-:: Copy the library and executable files out from 'src'
-@COPY /Y src\lua.exe lua.exe
-@COPY /Y src\luac.exe luac.exe
-@COPY /Y src\lua.dll lua.dll
-
-:ENDSCRIPT
-
-:: End local variable scope
-@ENDLOCAL
