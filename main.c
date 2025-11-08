@@ -5,6 +5,7 @@
 #include "stdlib.h"
 #include "lua.h"
 #include "lauxlib.h"
+#include "time.h"
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
@@ -94,6 +95,36 @@ typedef struct {
 } Swimd_Algo_State;
 
 static Swimd_Algo_State swimd_state = {0};
+static FILE* swimd_log = {0};
+
+void swimd_log_init(void) {
+    swimd_log = fopen("swimd.log", "a");
+    if (swimd_log == NULL) {
+        fprintf(stderr, "Unable to init log file");
+        exit(1);
+    }
+}
+
+void swimd_log_free(void) {
+    fclose(swimd_log);
+}
+
+void swimd_log_append(const char* msg) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    time_t seconds = ts.tv_sec;
+
+    struct tm *t = localtime(&seconds);
+
+    fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
+        t->tm_year+1900, t->tm_mon+1, t->tm_mday,
+        t->tm_hour, t->tm_min, t->tm_sec,
+        ts.tv_nsec
+    );
+    fprintf(swimd_log, msg);
+    fprintf(swimd_log, "\n");
+    fflush(swimd_log);
+}
 
 void swimd_folders_init(Swimd_Folder_Struct_List* lst) {
     int default_size = 4;
@@ -288,7 +319,7 @@ void swimd_setup_needle(char* needle) {
     swimd_prep_needle_vec(&swimd_state);
 }
 
-void swimd_setup_needle_free() {
+void swimd_setup_needle_free(void) {
     swimd_prep_needle_vec_free(&swimd_state);
 }
 
@@ -366,7 +397,7 @@ void swimd_vec_estimate(Swimd_Algo_Matrix* d,
     ], res);
 }
 
-void swimd_simd_scores() {
+void swimd_simd_scores(void) {
     for (int i = 0; i < swimd_state.files_vec_length; i++) {
         swimd_vec_estimate(
             &swimd_state.d_vec,
@@ -481,7 +512,7 @@ void swimd_top_scores(int n) {
             swimd_compare_heap_item);
 }
 
-void swimd_top_scores_free() {
+void swimd_top_scores_free(void) {
     swimd_scores_heap_free(&swimd_state.scores_heap);
 }
 
@@ -497,7 +528,7 @@ void swimd_state_init(const char* root_path) {
     swimd_scores_init(&swimd_state);
 }
 
-void swimd_state_free() {
+void swimd_state_free(void) {
     swimd_scores_free(&swimd_state);
     swimd_prep_files_vec_free(&swimd_state);
     swimd_list_directories_free(&swimd_state.files,
@@ -532,52 +563,96 @@ void swimd_print_path(char* buf, Swimd_File* file) {
     buf[buf_length++] = '\0';
 }
 
-static int l_add(lua_State *L) {
+void swimd_process_input(char* needle) {
+    swimd_setup_needle(needle);
+
+    swimd_simd_scores();
+    swimd_top_scores(10);
+
+    for (int i = 0; i < swimd_state.scores_heap.size; i++) {
+        Swimd_Scores_Heap_Item heap_item = swimd_state.scores_heap.arr[i];
+        Swimd_File file = swimd_state.files.arr[heap_item.index];
+        char path[MAX_PATH_LENGTH];
+        swimd_print_path(path, &file);
+        printf("ind = %d, score = %d, file = %s path = %s\n", 
+                heap_item.index,
+                heap_item.score,
+                file.name,
+                path);
+    }
+
+    swimd_top_scores_free();
+    swimd_setup_needle_free();
+}
+
+void swimd_scenario_find_hello(void) {
+    const char* root_path = "c:\\temp";
+    while (1) {
+        swimd_state_init(root_path);
+
+        printf("--------------------\n");
+        swimd_process_input("hel");
+        printf("--------------------\n");
+        swimd_process_input("hell");
+        printf("--------------------\n");
+        swimd_process_input("hello");
+        printf("--------------------\n");
+
+        swimd_state_free();
+        getchar();
+    }
+}
+
+int swimd_l_add(lua_State *L) {
     double a = luaL_checknumber(L, 1);
     double b = luaL_checknumber(L, 2);
     lua_pushnumber(L, a + b);
     return 1;
 }
 
-__declspec(dllexport) int luaopen_swimd(lua_State *L) {
+int swimd_lua_init(lua_State *L) {
+    swimd_log_init();
+    swimd_log_append("swimd_lua_init");
+    return 0;
+}
+
+int swimd_lua_shutdown(lua_State *L) {
+    swimd_log_free();
+    return 0;
+}
+
+int swimd_lua_setup_workspace(lua_State *L) {
+    const char* workspace = luaL_checkstring(L, 1);
+    return 1;
+}
+
+int swimd_l_print(lua_State *L) {
+    const char* str = luaL_checkstring(L, 1);
+    char greeting[100] = "Hello ";
+    strcat(greeting, str);
+    strcat(greeting, "!");
+    lua_pushstring(L, greeting);
+    return 1;
+}
+
+__declspec(dllexport) 
+int luaopen_swimd(lua_State *L) {
     static const luaL_Reg funcs[] = {
-        {"add", l_add},
+        {"init", swimd_lua_init},
+        {"setup_workspace", swimd_lua_setup_workspace},
+        {"shutdown", swimd_lua_shutdown},
+
+        {"add", swimd_l_add},
+        {"print", swimd_l_print},
         {NULL, NULL}
     };
     luaL_register(L, "swimd", funcs);
     return 1;
 }
 
-void swimd_scenario_find_hello() {
-    const char* root_path = "c:\\temp";
-    while (1) {
-        swimd_state_init(root_path);
-        swimd_setup_needle("controller");
-
-        swimd_simd_scores();
-        swimd_top_scores(20);
-
-        for (int i = 0; i < swimd_state.scores_heap.size; i++) {
-            Swimd_Scores_Heap_Item heap_item = swimd_state.scores_heap.arr[i];
-            Swimd_File file = swimd_state.files.arr[heap_item.index];
-            char path[MAX_PATH_LENGTH];
-            swimd_print_path(path, &file);
-            printf("ind = %d, score = %d, file = %s path = %s\n", 
-                    heap_item.index,
-                    heap_item.score,
-                    file.name,
-                    path);
-        }
-
-        swimd_top_scores_free();
-        swimd_setup_needle_free();
-        swimd_state_free();
-
-        getchar();
-    }
-}
-
 int main() {
+    swimd_log_init();
     swimd_scenario_find_hello();
+    swimd_log_free();
     return 0;
 }
