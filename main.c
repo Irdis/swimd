@@ -92,6 +92,13 @@ typedef struct {
     Swimd_Scores_Heap scores_heap;
 
     Swimd_Algo_Matrix d_vec;
+
+    HANDLE scan_thread;
+    HANDLE scan_begin;
+    HANDLE scan_finished;
+    volatile BOOL scan_terminate;
+    volatile BOOL scan_cancelled;
+    char* scan_path;
 } Swimd_Algo_State;
 
 static Swimd_Algo_State swimd_state = {0};
@@ -109,19 +116,41 @@ void swimd_log_free(void) {
     fclose(swimd_log);
 }
 
-void swimd_log_append(const char* msg) {
+void swimd_log_append(const char* msg, ...) {
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
     time_t seconds = ts.tv_sec;
 
     struct tm *t = localtime(&seconds);
 
+#ifdef DEBUG_PRINT
+    printf("%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
+        t->tm_year+1900, t->tm_mon+1, t->tm_mday,
+        t->tm_hour, t->tm_min, t->tm_sec,
+        ts.tv_nsec
+    );
+#endif
+
     fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
         t->tm_year+1900, t->tm_mon+1, t->tm_mday,
         t->tm_hour, t->tm_min, t->tm_sec,
         ts.tv_nsec
     );
-    fprintf(swimd_log, msg);
+    va_list args;
+    va_start(args, msg);
+
+#ifdef DEBUG_PRINT
+    va_list args_copy;
+    va_copy(args_copy, args);
+    vprintf(msg, args_copy);
+    va_end(args_copy);
+#endif
+    vfprintf(swimd_log, msg, args);
+    va_end(args);
+
+#ifdef DEBUG_PRINT
+    printf("\n");
+#endif
     fprintf(swimd_log, "\n");
     fflush(swimd_log);
 }
@@ -184,11 +213,11 @@ void swimd_list_directories(const char* root_dir,
     h_find = FindFirstFile(root_mask, &find_file_data);
 
     if (h_find == INVALID_HANDLE_VALUE) {
-        printf("FindFirstFile failed (%lu)\n", GetLastError());
+        swimd_log_append("FindFirstFile failed (%lu)\n", GetLastError());
         return;
     }
 
-    do {
+    while (1) {
         const char* current_file = find_file_data.cFileName;
         int current_file_len = strlen(current_file);
 
@@ -224,11 +253,19 @@ void swimd_list_directories(const char* root_dir,
 
             swimd_filelist_append(file_list, file_node);
         }
-    } while (FindNextFile(h_find, &find_file_data) != 0);
 
-    DWORD dw_error = GetLastError();
-    if (dw_error != ERROR_NO_MORE_FILES) {
-        printf("FindNextFile error (%lu)\n", dw_error);
+        if (FindNextFile(h_find, &find_file_data) == 0)
+            break;
+        if (swimd_state.scan_cancelled)
+            break;
+    }
+
+    if (!swimd_state.scan_cancelled)
+    {
+        DWORD dw_error = GetLastError();
+        if (dw_error != ERROR_NO_MORE_FILES) {
+            swimd_log_append("FindNextFile error (%lu)", dw_error);
+        }
     }
 
     FindClose(h_find);
@@ -342,10 +379,10 @@ void swimd_prep_d_vec(Swimd_Algo_State* state) {
 }
 
 void swimd_vec_estimate(Swimd_Algo_Matrix* d,
-    short* a, 
-    int a_len, 
+    short* a,
+    int a_len,
     short* b,
-    int b_len, 
+    int b_len,
     int pos,
     short* scores
 ) {
@@ -358,19 +395,19 @@ void swimd_vec_estimate(Swimd_Algo_Matrix* d,
 
     Vector res = _mm256_set1_epi16(SHRT_MIN);
     for (int i = 1; i < n; i++) {
-        Vector va = _mm256_loadu_si256((__m256i const*)&a[LANES_COUNT_SHORT * (i - 1)]);
+        Vector va = _mm256_loadu_si256((Vector const*)&a[LANES_COUNT_SHORT * (i - 1)]);
         for (int j = 1; j < m; j++) {
-            Vector vb = _mm256_loadu_si256((__m256i const*)&b[LANES_COUNT_SHORT * (j - 1)]);
-            Vector vdiag = _mm256_loadu_si256((__m256i const*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) + 
+            Vector vb = _mm256_loadu_si256((Vector const*)&b[LANES_COUNT_SHORT * (j - 1)]);
+            Vector vdiag = _mm256_loadu_si256((Vector const*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) +
                     LANES_COUNT_SHORT * (j - 1)
             ]);
-            Vector vup = _mm256_loadu_si256((__m256i const*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i + 
+            Vector vup = _mm256_loadu_si256((Vector const*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i +
                     LANES_COUNT_SHORT * (j - 1)
             ]);
-            Vector vleft = _mm256_loadu_si256((__m256i const*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) + 
+            Vector vleft = _mm256_loadu_si256((Vector const*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) +
                     LANES_COUNT_SHORT * j
             ]);
 
@@ -385,14 +422,14 @@ void swimd_vec_estimate(Swimd_Algo_Matrix* d,
 
             Vector o = _mm256_max_epi16(o1, o2);
             o = _mm256_max_epi16(o, o3);
-            _mm256_storeu_si256((__m256i*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i + 
+            _mm256_storeu_si256((Vector*)&(*d)[
+                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i +
                     LANES_COUNT_SHORT * j
             ], o);
             res = _mm256_max_epi16(res, o);
         }
     }
-    _mm256_storeu_si256((__m256i*)&scores[
+    _mm256_storeu_si256((Vector*)&scores[
             pos * LANES_COUNT_SHORT
     ], res);
 }
@@ -439,7 +476,7 @@ void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
         int left_ind = LEFT_HEAP(ind);
         if (left_ind < scores_heap->size &&
             scores_heap->arr[ind].score > scores_heap->arr[left_ind].score) {
-            SWAP(scores_heap->arr[ind], 
+            SWAP(scores_heap->arr[ind],
                     scores_heap->arr[left_ind],
                     Swimd_Scores_Heap_Item);
             ind = left_ind;
@@ -449,7 +486,7 @@ void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
         int right_ind = RIGHT_HEAP(ind);
         if (right_ind < scores_heap->size &&
             scores_heap->arr[ind].score > scores_heap->arr[right_ind].score) {
-            SWAP(scores_heap->arr[ind], 
+            SWAP(scores_heap->arr[ind],
                     scores_heap->arr[right_ind],
                     Swimd_Scores_Heap_Item);
             ind = right_ind;
@@ -517,6 +554,8 @@ void swimd_top_scores_free(void) {
 }
 
 void swimd_state_init(const char* root_path) {
+    swimd_log_append("scanning path started %s", root_path);
+
     swimd_filelist_init(&swimd_state.files);
     swimd_folders_init(&swimd_state.folders.folder_lst);
     swimd_list_directories(root_path,
@@ -526,6 +565,36 @@ void swimd_state_init(const char* root_path) {
     swimd_prep_files_vec(&swimd_state);
     swimd_prep_d_vec(&swimd_state);
     swimd_scores_init(&swimd_state);
+
+    swimd_log_append("scanning path completed");
+}
+
+DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
+    swimd_log_append("Scanning loop start");
+    while (1) {
+        WaitForSingleObject(swimd_state.scan_begin, INFINITE);
+
+        if (swimd_state.scan_terminate)
+            break;
+
+        ResetEvent(swimd_state.scan_finished);
+
+        swimd_state_init(swimd_state.scan_path);
+        
+        SetEvent(swimd_state.scan_finished);
+    }
+    swimd_log_append("Scanning loop exit");
+    return 0;
+}
+
+void swimd_scan_thread_init(void) {
+    swimd_state.scan_thread = CreateThread(NULL, 0, swimd_scan_loop, NULL, 0, NULL);
+    swimd_state.scan_begin = CreateEvent(NULL, FALSE, FALSE, NULL);
+    swimd_state.scan_finished = CreateEvent(NULL, TRUE, TRUE, NULL);
+}
+
+void swimd_scan_path_free(void) {
+    free(swimd_state.scan_path);
 }
 
 void swimd_state_free(void) {
@@ -535,6 +604,39 @@ void swimd_state_free(void) {
             &swimd_state.folders);
     swimd_folders_free(&swimd_state.folders.folder_lst);
     swimd_filelist_free(&swimd_state.files);
+}
+
+void swimd_scan_thread_stop(void) {
+    swimd_state.scan_cancelled = TRUE;
+    swimd_state.scan_terminate = TRUE;
+    WaitForSingleObject(swimd_state.scan_finished, INFINITE);
+    SetEvent(swimd_state.scan_begin);
+    WaitForSingleObject(swimd_state.scan_thread, INFINITE);
+    if (swimd_state.scan_path != NULL) {
+        swimd_scan_path_free();
+        swimd_state_free();
+    }
+
+    CloseHandle(swimd_state.scan_begin);
+    CloseHandle(swimd_state.scan_finished);
+    CloseHandle(swimd_state.scan_thread);
+}
+
+void swimd_setup_scan_path(const char* scan_path) {
+    swimd_state.scan_cancelled = TRUE;
+    WaitForSingleObject(swimd_state.scan_finished, INFINITE);
+    swimd_state.scan_cancelled = FALSE;
+
+    if (swimd_state.scan_path != NULL) {
+        swimd_scan_path_free();
+        swimd_state_free();
+    }
+
+    int scan_path_len = strlen(scan_path);
+    swimd_state.scan_path = malloc((scan_path_len + 1) * sizeof(char));
+    strcpy(swimd_state.scan_path, scan_path);
+
+    SetEvent(swimd_state.scan_begin);
 }
 
 void swimd_str_reverse(char* buf, int buf_length) {
@@ -574,7 +676,7 @@ void swimd_process_input(char* needle) {
         Swimd_File file = swimd_state.files.arr[heap_item.index];
         char path[MAX_PATH_LENGTH];
         swimd_print_path(path, &file);
-        printf("ind = %d, score = %d, file = %s path = %s\n", 
+        printf("ind = %d, score = %d, file = %s path = %s\n",
                 heap_item.index,
                 heap_item.score,
                 file.name,
@@ -635,7 +737,7 @@ int swimd_l_print(lua_State *L) {
     return 1;
 }
 
-__declspec(dllexport) 
+__declspec(dllexport)
 int luaopen_swimd(lua_State *L) {
     static const luaL_Reg funcs[] = {
         {"init", swimd_lua_init},
@@ -652,7 +754,14 @@ int luaopen_swimd(lua_State *L) {
 
 int main() {
     swimd_log_init();
-    swimd_scenario_find_hello();
+    swimd_scan_thread_init();
+    for (int i = 0; i < 10; i++) {
+        swimd_setup_scan_path("c:\\Projects");
+        getchar();
+    }
+    swimd_scan_thread_stop();
     swimd_log_free();
+
+    printf("Over\n");
     return 0;
 }

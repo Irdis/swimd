@@ -19,7 +19,7 @@ main_lib:
 	$(CC) main.c -LD $(CFLAGS) $(INCLUDES) -link $(LIBPATHS) -out:swimd.dll
 
 main_exe:
-	$(CC) main.c $(CFLAGS) -ZI $(INCLUDES) -link -out:swimd.exe $(LIBPATHS) -DEBUG
+	$(CC) main.c -DDEBUG_PRINT $(CFLAGS) -ZI $(INCLUDES) -link -out:swimd.exe $(LIBPATHS) -DEBUG
 
 clean:
 	del *.exe *.exp *.lib *.obj *.dll *.pdb *.idb *.ilk
