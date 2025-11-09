@@ -211,10 +211,11 @@ void swimd_filelist_append(Swimd_File_List* lst, Swimd_File file) {
     lst->arr[lst->length] = file;
     lst->length++;
     if (lst->length % 10000 == 0)
-        printf("lst->length = %d\n", lst->length);
+        swimd_log_append("Scanned file count %d", lst->length);
 }
 
 void swimd_filelist_free(Swimd_File_List* lst) {
+    lst->length = 0;
     free(lst->arr);
 }
 
@@ -371,13 +372,18 @@ void swimd_prep_needle_vec_free(Swimd_Algo_State* state) {
     free(state->needle_vec);
 }
 
-void swimd_setup_needle(char* needle) {
-    swimd_state.needle = needle;
-    swimd_state.needle_length = strlen(needle);
+void swimd_setup_needle(const char* needle) {
+    int needle_length = strlen(needle);
+    swimd_state.needle = malloc((needle_length + 1) * sizeof(char));
+    strcpy(swimd_state.needle, needle);
+    swimd_state.needle_length = needle_length;
+
     swimd_prep_needle_vec(&swimd_state);
 }
 
 void swimd_setup_needle_free(void) {
+    free(swimd_state.needle);
+
     swimd_prep_needle_vec_free(&swimd_state);
 }
 
@@ -575,7 +581,7 @@ void swimd_top_scores_free(void) {
 }
 
 void swimd_state_init(const char* root_path) {
-    swimd_log_append("scanning path started %s", root_path);
+    swimd_log_append("Scanning path started %s", root_path);
 
     swimd_filelist_init(&swimd_state.files);
     swimd_folders_init(&swimd_state.folders.folder_lst);
@@ -587,7 +593,7 @@ void swimd_state_init(const char* root_path) {
     swimd_prep_d_vec(&swimd_state);
     swimd_scores_init(&swimd_state);
 
-    swimd_log_append("scanning path completed");
+    swimd_log_append("Scanning path completed");
 }
 
 DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
@@ -599,7 +605,6 @@ DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
             break;
 
         ResetEvent(swimd_state.scan_finished);
-        swimd_state.scan_in_progress = TRUE;
 
         swimd_state_init(swimd_state.scan_path);
 
@@ -660,6 +665,7 @@ void swimd_scan_setup_path(const char* scan_path) {
     strcpy(swimd_state.scan_path, scan_path);
 
     SetEvent(swimd_state.scan_begin);
+    swimd_state.scan_in_progress = TRUE;
 }
 
 void swimd_str_reverse(char* buf, int buf_length) {
@@ -688,7 +694,7 @@ void swimd_print_path(char* buf, Swimd_File* file) {
     buf[buf_length++] = '\0';
 }
 
-void swimd_process_input(char* needle, 
+void swimd_process_input(const char* needle, 
         int max_size, 
         Swimd_Process_Input_Result* result) {
     swimd_setup_needle(needle);
@@ -721,12 +727,12 @@ void swimd_process_input(char* needle,
     swimd_setup_needle_free();
 }
 
-void swimd_scan_process_input(char* input, 
+void swimd_scan_process_input(const char* input, 
         int max_size, 
         Swimd_Process_Input_Result* result) {
+    result->scanned_items_count = swimd_state.files.length;
     if (swimd_state.scan_in_progress) {
         result->scan_in_progress = TRUE;
-        result->scanned_items_count = swimd_state.files.length;
         return;
     }
     result->scan_in_progress = FALSE;
@@ -745,50 +751,87 @@ void swimd_scan_process_input_free(Swimd_Process_Input_Result* result) {
     free(result->items);
 }
 
-// void swimd_scenario_find_hello(void) {
-//     const char* root_path = "c:\\temp";
-//     while (1) {
-//         swimd_state_init(root_path);
-//
-//         printf("--------------------\n");
-//         swimd_process_input("hel");
-//         printf("--------------------\n");
-//         swimd_process_input("hell");
-//         printf("--------------------\n");
-//         swimd_process_input("hello");
-//         printf("--------------------\n");
-//
-//         swimd_state_free();
-//         getchar();
-//     }
-// }
-//
-int swimd_l_add(lua_State *L) {
-    double a = luaL_checknumber(L, 1);
-    double b = luaL_checknumber(L, 2);
-    lua_pushnumber(L, a + b);
-    return 1;
-}
-
 int swimd_lua_init(lua_State *L) {
     swimd_log_init();
-    swimd_log_append("swimd_lua_init");
+
+    swimd_log_append("Initializing");
+
+    swimd_scan_thread_init();
+
+    swimd_log_append("Initializing completed");
     return 0;
 }
 
 int swimd_lua_shutdown(lua_State *L) {
+    swimd_log_append("Shutting down");
+
+    swimd_scan_thread_stop();
+
+    swimd_log_append("Shutting down completed");
     swimd_log_free();
     return 0;
 }
 
 int swimd_lua_setup_workspace(lua_State *L) {
     const char* workspace = luaL_checkstring(L, 1);
+
+    swimd_log_append("Setting up workspace path %s", workspace);
+
+    swimd_scan_setup_path(workspace);
+
+    swimd_log_append("Workspace path setup");
+    return 0;
+}
+
+int swimd_lua_process_input(lua_State *L) {
+    const char* input = luaL_checkstring(L, 1);
+    int max_size = luaL_checknumber(L, 2);
+
+    Swimd_Process_Input_Result result = {0};
+
+    swimd_scan_process_input(input, max_size, &result);
+    lua_newtable(L);
+    lua_pushstring(L, "scan_in_progress");
+    lua_pushboolean(L, result.scan_in_progress);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "scanned_items_count");
+    lua_pushinteger(L, result.scanned_items_count);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "items");
+    lua_newtable(L);
+    if (!result.scan_in_progress) {
+        for (int i = 0; i < result.items_length; i++) {
+            Swimd_Process_Input_Result_Item item = result.items[i];
+
+            lua_pushnumber(L, i + 1);
+
+            lua_newtable(L);
+            lua_pushstring(L, "name");
+            lua_pushstring(L, item.name);
+            lua_settable(L, -3);
+
+            lua_pushstring(L, "score");
+            lua_pushinteger(L, item.score);
+            lua_settable(L, -3);
+
+            lua_pushstring(L, "path");
+            lua_pushstring(L, item.path);
+            lua_settable(L, -3);
+
+            lua_settable(L, -3);
+        }
+    }
+    lua_settable(L, -3);
+
+    swimd_scan_process_input_free(&result);
     return 1;
 }
 
-int swimd_l_print(lua_State *L) {
+int swimd_lua_sayhello(lua_State *L) {
     const char* str = luaL_checkstring(L, 1);
-    char greeting[100] = "Hello ";
+    char greeting[100] = "Hello, ";
     strcat(greeting, str);
     strcat(greeting, "!");
     lua_pushstring(L, greeting);
@@ -800,10 +843,10 @@ int luaopen_swimd(lua_State *L) {
     static const luaL_Reg funcs[] = {
         {"init", swimd_lua_init},
         {"setup_workspace", swimd_lua_setup_workspace},
+        {"process_input", swimd_lua_process_input},
         {"shutdown", swimd_lua_shutdown},
+        {"say_hello", swimd_lua_sayhello},
 
-        {"add", swimd_l_add},
-        {"print", swimd_l_print},
         {NULL, NULL}
     };
     luaL_register(L, "swimd", funcs);
