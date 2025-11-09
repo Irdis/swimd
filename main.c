@@ -29,6 +29,19 @@
         b = temp;        \
     } while (0)
 
+typedef struct  {
+    char* path;
+    char* name;
+    int score;
+} Swimd_Process_Input_Result_Item;
+
+typedef struct {
+    BOOL scan_in_progress;
+    int scanned_items_count;
+    Swimd_Process_Input_Result_Item* items;
+    int items_length;
+} Swimd_Process_Input_Result;
+
 typedef struct Swimd_Folder_Struct Swimd_Folder_Struct;
 
 typedef struct {
@@ -88,7 +101,6 @@ typedef struct {
     Swimd_Folder_Struct folders;
     short* scores;
     int scores_length;
-
     Swimd_Scores_Heap scores_heap;
 
     Swimd_Algo_Matrix d_vec;
@@ -98,6 +110,7 @@ typedef struct {
     HANDLE scan_finished;
     volatile BOOL scan_terminate;
     volatile BOOL scan_cancelled;
+    volatile BOOL scan_in_progress;
     char* scan_path;
 } Swimd_Algo_State;
 
@@ -125,15 +138,23 @@ void swimd_log_append(const char* msg, ...) {
 
 #ifdef DEBUG_PRINT
     printf("%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
-        t->tm_year+1900, t->tm_mon+1, t->tm_mday,
-        t->tm_hour, t->tm_min, t->tm_sec,
+        t->tm_year+1900, 
+        t->tm_mon+1, 
+        t->tm_mday,
+        t->tm_hour, 
+        t->tm_min, 
+        t->tm_sec,
         ts.tv_nsec
     );
 #endif
 
     fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
-        t->tm_year+1900, t->tm_mon+1, t->tm_mday,
-        t->tm_hour, t->tm_min, t->tm_sec,
+        t->tm_year+1900, 
+        t->tm_mon+1, 
+        t->tm_mday,
+        t->tm_hour, 
+        t->tm_min, 
+        t->tm_sec,
         ts.tv_nsec
     );
     va_list args;
@@ -578,9 +599,11 @@ DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
             break;
 
         ResetEvent(swimd_state.scan_finished);
+        swimd_state.scan_in_progress = TRUE;
 
         swimd_state_init(swimd_state.scan_path);
-        
+
+        swimd_state.scan_in_progress = FALSE;
         SetEvent(swimd_state.scan_finished);
     }
     swimd_log_append("Scanning loop exit");
@@ -622,7 +645,7 @@ void swimd_scan_thread_stop(void) {
     CloseHandle(swimd_state.scan_thread);
 }
 
-void swimd_setup_scan_path(const char* scan_path) {
+void swimd_scan_setup_path(const char* scan_path) {
     swimd_state.scan_cancelled = TRUE;
     WaitForSingleObject(swimd_state.scan_finished, INFINITE);
     swimd_state.scan_cancelled = FALSE;
@@ -665,46 +688,81 @@ void swimd_print_path(char* buf, Swimd_File* file) {
     buf[buf_length++] = '\0';
 }
 
-void swimd_process_input(char* needle) {
+void swimd_process_input(char* needle, 
+        int max_size, 
+        Swimd_Process_Input_Result* result) {
     swimd_setup_needle(needle);
 
     swimd_simd_scores();
-    swimd_top_scores(10);
+    swimd_top_scores(max_size);
+
+    result->items = malloc(max_size * sizeof(Swimd_Process_Input_Result_Item));
 
     for (int i = 0; i < swimd_state.scores_heap.size; i++) {
         Swimd_Scores_Heap_Item heap_item = swimd_state.scores_heap.arr[i];
         Swimd_File file = swimd_state.files.arr[heap_item.index];
+        printf("i %d\n", i);
+
         char path[MAX_PATH_LENGTH];
         swimd_print_path(path, &file);
-        printf("ind = %d, score = %d, file = %s path = %s\n",
-                heap_item.index,
-                heap_item.score,
-                file.name,
-                path);
+        int path_length = strlen(path);
+
+        Swimd_Process_Input_Result_Item item = {0};
+        item.path = malloc((path_length + 1) * sizeof(char));
+        strcpy(item.path, path);
+        item.name = malloc((file.name_length + 1) * sizeof(char));
+        strcpy(item.name, file.name);
+        item.score = heap_item.score;
+        result->items[result->items_length] = item;
+        result->items_length++;
     }
 
     swimd_top_scores_free();
     swimd_setup_needle_free();
 }
 
-void swimd_scenario_find_hello(void) {
-    const char* root_path = "c:\\temp";
-    while (1) {
-        swimd_state_init(root_path);
-
-        printf("--------------------\n");
-        swimd_process_input("hel");
-        printf("--------------------\n");
-        swimd_process_input("hell");
-        printf("--------------------\n");
-        swimd_process_input("hello");
-        printf("--------------------\n");
-
-        swimd_state_free();
-        getchar();
+void swimd_scan_process_input(char* input, 
+        int max_size, 
+        Swimd_Process_Input_Result* result) {
+    if (swimd_state.scan_in_progress) {
+        result->scan_in_progress = TRUE;
+        result->scanned_items_count = swimd_state.files.length;
+        return;
     }
+    result->scan_in_progress = FALSE;
+    swimd_process_input(input, max_size, result);
 }
 
+void swimd_scan_process_input_free(Swimd_Process_Input_Result* result) {
+    if (result->items == NULL)
+        return;
+
+    for (int i = 0; i < result->items_length; i++) {
+        Swimd_Process_Input_Result_Item item = result->items[i];
+        free(item.path);
+        free(item.name);
+    }
+    free(result->items);
+}
+
+// void swimd_scenario_find_hello(void) {
+//     const char* root_path = "c:\\temp";
+//     while (1) {
+//         swimd_state_init(root_path);
+//
+//         printf("--------------------\n");
+//         swimd_process_input("hel");
+//         printf("--------------------\n");
+//         swimd_process_input("hell");
+//         printf("--------------------\n");
+//         swimd_process_input("hello");
+//         printf("--------------------\n");
+//
+//         swimd_state_free();
+//         getchar();
+//     }
+// }
+//
 int swimd_l_add(lua_State *L) {
     double a = luaL_checknumber(L, 1);
     double b = luaL_checknumber(L, 2);
@@ -756,8 +814,28 @@ int main() {
     swimd_log_init();
     swimd_scan_thread_init();
     for (int i = 0; i < 10; i++) {
-        swimd_setup_scan_path("c:\\Projects");
+        swimd_scan_setup_path("c:\\projects");
         getchar();
+        while(1) {
+            Swimd_Process_Input_Result result = {0};
+            swimd_scan_process_input("hello", 10, &result);
+
+            if (result.scan_in_progress) {
+                printf("Scanning %d\n", result.scanned_items_count);
+            } else {
+                for (int i = 0; i < result.items_length; i++) {
+                    Swimd_Process_Input_Result_Item item = result.items[i];
+
+                    printf("name = %s, score = %d, path = %s\n",
+                            item.name,
+                            item.score,
+                            item.path);
+                }
+            }
+
+            swimd_scan_process_input_free(&result);
+            getchar();
+        }
     }
     swimd_scan_thread_stop();
     swimd_log_free();

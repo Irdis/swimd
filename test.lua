@@ -1,1 +1,1 @@
-require("swimd").init()
+require("swimd").print("abc")
