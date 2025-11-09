@@ -89,6 +89,8 @@ typedef struct  {
 } Swimd_Scores_Heap;
 
 typedef struct {
+    BOOL initialized;
+
     char* needle;
     int needle_length;
     short* needle_vec;
@@ -107,6 +109,7 @@ typedef struct {
 
     HANDLE scan_thread;
     HANDLE scan_begin;
+    HANDLE scan_started;
     HANDLE scan_finished;
     volatile BOOL scan_terminate;
     volatile BOOL scan_cancelled;
@@ -604,6 +607,8 @@ DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
         if (swimd_state.scan_terminate)
             break;
 
+        SetEvent(swimd_state.scan_started);
+
         ResetEvent(swimd_state.scan_finished);
 
         swimd_state_init(swimd_state.scan_path);
@@ -618,6 +623,7 @@ DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
 void swimd_scan_thread_init(void) {
     swimd_state.scan_thread = CreateThread(NULL, 0, swimd_scan_loop, NULL, 0, NULL);
     swimd_state.scan_begin = CreateEvent(NULL, FALSE, FALSE, NULL);
+    swimd_state.scan_started = CreateEvent(NULL, FALSE, FALSE, NULL);
     swimd_state.scan_finished = CreateEvent(NULL, TRUE, TRUE, NULL);
 }
 
@@ -636,16 +642,22 @@ void swimd_state_free(void) {
 
 void swimd_scan_thread_stop(void) {
     swimd_state.scan_cancelled = TRUE;
-    swimd_state.scan_terminate = TRUE;
     WaitForSingleObject(swimd_state.scan_finished, INFINITE);
+    swimd_state.scan_cancelled = FALSE;
+
+    swimd_state.scan_terminate = TRUE;
     SetEvent(swimd_state.scan_begin);
     WaitForSingleObject(swimd_state.scan_thread, INFINITE);
+    swimd_state.scan_terminate = FALSE;
+
     if (swimd_state.scan_path != NULL) {
         swimd_scan_path_free();
         swimd_state_free();
+        swimd_state.scan_path = NULL;
     }
 
     CloseHandle(swimd_state.scan_begin);
+    CloseHandle(swimd_state.scan_started);
     CloseHandle(swimd_state.scan_finished);
     CloseHandle(swimd_state.scan_thread);
 }
@@ -658,6 +670,7 @@ void swimd_scan_setup_path(const char* scan_path) {
     if (swimd_state.scan_path != NULL) {
         swimd_scan_path_free();
         swimd_state_free();
+        swimd_state.scan_path = NULL;
     }
 
     int scan_path_len = strlen(scan_path);
@@ -666,6 +679,8 @@ void swimd_scan_setup_path(const char* scan_path) {
 
     SetEvent(swimd_state.scan_begin);
     swimd_state.scan_in_progress = TRUE;
+    // need to wait until we start scanning, in order not to messup in cleanup when state has been not initialized
+    WaitForSingleObject(swimd_state.scan_started, INFINITE); 
 }
 
 void swimd_str_reverse(char* buf, int buf_length) {
@@ -719,6 +734,7 @@ void swimd_process_input(const char* needle,
         item.name = malloc((file.name_length + 1) * sizeof(char));
         strcpy(item.name, file.name);
         item.score = heap_item.score;
+
         result->items[result->items_length] = item;
         result->items_length++;
     }
@@ -752,6 +768,12 @@ void swimd_scan_process_input_free(Swimd_Process_Input_Result* result) {
 }
 
 int swimd_lua_init(lua_State *L) {
+    if (swimd_state.initialized) {
+        swimd_log_append("Already initialized");
+        return 0;
+    }
+    swimd_state.initialized = TRUE;
+
     swimd_log_init();
 
     swimd_log_append("Initializing");
@@ -763,12 +785,18 @@ int swimd_lua_init(lua_State *L) {
 }
 
 int swimd_lua_shutdown(lua_State *L) {
+    if (!swimd_state.initialized) {
+        return 0;
+    }
     swimd_log_append("Shutting down");
 
     swimd_scan_thread_stop();
 
     swimd_log_append("Shutting down completed");
+
     swimd_log_free();
+
+    swimd_state.initialized = FALSE;
     return 0;
 }
 
@@ -854,35 +882,45 @@ int luaopen_swimd(lua_State *L) {
 }
 
 int main() {
+    getchar();
+    while (1) {
+
+    swimd_state.initialized = TRUE;
     swimd_log_init();
     swimd_scan_thread_init();
-    for (int i = 0; i < 10; i++) {
-        swimd_scan_setup_path("c:\\projects");
-        getchar();
-        while(1) {
-            Swimd_Process_Input_Result result = {0};
-            swimd_scan_process_input("hello", 10, &result);
 
-            if (result.scan_in_progress) {
-                printf("Scanning %d\n", result.scanned_items_count);
-            } else {
-                for (int i = 0; i < result.items_length; i++) {
-                    Swimd_Process_Input_Result_Item item = result.items[i];
-
-                    printf("name = %s, score = %d, path = %s\n",
-                            item.name,
-                            item.score,
-                            item.path);
-                }
-            }
-
-            swimd_scan_process_input_free(&result);
-            getchar();
-        }
-    }
+    swimd_scan_setup_path("c:\\projects");
+    Swimd_Process_Input_Result result = {0};
+    swimd_scan_process_input("hello", 10, &result);
+    swimd_scan_process_input_free(&result);
+    // for (int i = 0; i < 10; i++) {
+    //     swimd_scan_setup_path("c:\\projects");
+    //     getchar();
+    //     while(1) {
+    //         Swimd_Process_Input_Result result = {0};
+    //         swimd_scan_process_input("hello", 10, &result);
+    //
+    //         if (result.scan_in_progress) {
+    //             printf("Scanning %d\n", result.scanned_items_count);
+    //         } else {
+    //             for (int i = 0; i < result.items_length; i++) {
+    //                 Swimd_Process_Input_Result_Item item = result.items[i];
+    //
+    //                 printf("name = %s, score = %d, path = %s\n",
+    //                         item.name,
+    //                         item.score,
+    //                         item.path);
+    //             }
+    //         }
+    //
+    //         swimd_scan_process_input_free(&result);
+    //         getchar();
+    //     }
+    // }
     swimd_scan_thread_stop();
     swimd_log_free();
 
+    }
     printf("Over\n");
     return 0;
 }

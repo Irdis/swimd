@@ -16,7 +16,7 @@ LIBPATHS = \
 all: main_lib main_exe
 
 main_lib:
-	$(CC) main.c -LD $(CFLAGS) $(INCLUDES) -link $(LIBPATHS) -out:swimd.dll
+	$(CC) main.c -LD $(CFLAGS) -ZI $(INCLUDES) -link $(LIBPATHS) -out:swimd.dll -DEBUG
 
 main_exe:
 	$(CC) main.c -DDEBUG_PRINT $(CFLAGS) -ZI $(INCLUDES) -link -out:swimd.exe $(LIBPATHS) -DEBUG
