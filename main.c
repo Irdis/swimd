@@ -33,60 +33,60 @@ typedef struct  {
     char* path;
     char* name;
     int score;
-} Swimd_Process_Input_Result_Item;
+} SwimdProcessInputResultItem;
 
 typedef struct {
     BOOL scan_in_progress;
     int scanned_items_count;
-    Swimd_Process_Input_Result_Item* items;
+    SwimdProcessInputResultItem* items;
     int items_length;
-} Swimd_Process_Input_Result;
+} SwimdProcessInputResult;
 
-typedef struct Swimd_Folder_Struct Swimd_Folder_Struct;
+typedef struct SwimdFolderStruct SwimdFolderStruct;
 
 typedef struct {
-    Swimd_Folder_Struct** arr;
+    SwimdFolderStruct** arr;
     int length;
     int capacity;
-} Swimd_Folder_Struct_List;
+} SwimdFolderStructList;
 
-typedef struct Swimd_Folder_Struct
+typedef struct SwimdFolderStruct
 {
     char* name;
     int name_length;
-    Swimd_Folder_Struct_List folder_lst;
-    struct Swimd_Folder_Struct* parent;
-} Swimd_Folder_Struct;
+    SwimdFolderStructList folder_lst;
+    struct SwimdFolderStruct* parent;
+} SwimdFolderStruct;
 
 typedef struct {
     char* name;
     int name_length;
-    Swimd_Folder_Struct* folder;
-} Swimd_File;
+    SwimdFolderStruct* folder;
+} SwimdFile;
 
 typedef struct {
-    Swimd_File* arr;
+    SwimdFile* arr;
     int length;
     int capacity;
-} Swimd_File_List;
+} SwimdFileList;
 
-typedef short Swimd_Algo_Matrix[MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT];
+typedef short SwimdAlgoMatrix[MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT];
 
 typedef struct {
     short* arr;
     int length;
-} Swimd_File_Vec;
+} SwimdFileVec;
 
 typedef struct {
     int score;
     int index;
-} Swimd_Scores_Heap_Item;
+} SwimdScoresHeapItem;
 
 typedef struct  {
-    Swimd_Scores_Heap_Item* arr;
+    SwimdScoresHeapItem* arr;
     int size;
     int max_size;
-} Swimd_Scores_Heap;
+} SwimdScoresHeap;
 
 typedef struct {
     BOOL initialized;
@@ -96,16 +96,16 @@ typedef struct {
     short* needle_vec;
     int needle_vec_length;
 
-    Swimd_File_List files;
-    Swimd_File_Vec* files_vec;
+    SwimdFileList files;
+    SwimdFileVec* files_vec;
     int files_vec_length;
 
-    Swimd_Folder_Struct folders;
+    SwimdFolderStruct folders;
     short* scores;
     int scores_length;
-    Swimd_Scores_Heap scores_heap;
+    SwimdScoresHeap scores_heap;
 
-    Swimd_Algo_Matrix d_vec;
+    SwimdAlgoMatrix d_vec;
 
     HANDLE scan_thread;
     HANDLE scan_begin;
@@ -115,9 +115,9 @@ typedef struct {
     volatile BOOL scan_cancelled;
     volatile BOOL scan_in_progress;
     char* scan_path;
-} Swimd_Algo_State;
+} SwimdAlgoState;
 
-static Swimd_Algo_State swimd_state = {0};
+static SwimdAlgoState swimd_state = {0};
 static FILE* swimd_log = {0};
 
 void swimd_log_init(void) {
@@ -179,37 +179,37 @@ void swimd_log_append(const char* msg, ...) {
     fflush(swimd_log);
 }
 
-void swimd_folders_init(Swimd_Folder_Struct_List* lst) {
+void swimd_folders_init(SwimdFolderStructList* lst) {
     int default_size = 4;
-    lst->arr = malloc(default_size * sizeof(Swimd_Folder_Struct*));
+    lst->arr = malloc(default_size * sizeof(SwimdFolderStruct*));
     lst->length = 0;
     lst->capacity = default_size;
 }
 
-void swimd_folders_append(Swimd_Folder_Struct_List* lst, Swimd_Folder_Struct* folder) {
+void swimd_folders_append(SwimdFolderStructList* lst, SwimdFolderStruct* folder) {
     if (lst->length == lst->capacity) {
         lst->capacity = lst->capacity * 2;
-        lst->arr = realloc(lst->arr, lst->capacity * sizeof(Swimd_Folder_Struct*));
+        lst->arr = realloc(lst->arr, lst->capacity * sizeof(SwimdFolderStruct*));
     }
     lst->arr[lst->length] = folder;
     lst->length++;
 }
 
-void swimd_folders_free(Swimd_Folder_Struct_List* lst) {
+void swimd_folders_free(SwimdFolderStructList* lst) {
     free(lst->arr);
 }
 
-void swimd_filelist_init(Swimd_File_List* lst) {
+void SwimdFilelist_init(SwimdFileList* lst) {
     int default_size = 4;
-    lst->arr = malloc(default_size * sizeof(Swimd_File));
+    lst->arr = malloc(default_size * sizeof(SwimdFile));
     lst->length = 0;
     lst->capacity = default_size;
 }
 
-void swimd_filelist_append(Swimd_File_List* lst, Swimd_File file) {
+void SwimdFilelist_append(SwimdFileList* lst, SwimdFile file) {
     if (lst->length == lst->capacity) {
         lst->capacity = lst->capacity * 2;
-        lst->arr = realloc(lst->arr, lst->capacity * sizeof(Swimd_File));
+        lst->arr = realloc(lst->arr, lst->capacity * sizeof(SwimdFile));
     }
     lst->arr[lst->length] = file;
     lst->length++;
@@ -217,14 +217,14 @@ void swimd_filelist_append(Swimd_File_List* lst, Swimd_File file) {
         swimd_log_append("Scanned file count %d", lst->length);
 }
 
-void swimd_filelist_free(Swimd_File_List* lst) {
+void SwimdFilelist_free(SwimdFileList* lst) {
     lst->length = 0;
     free(lst->arr);
 }
 
 void swimd_list_directories(const char* root_dir,
-        Swimd_File_List* file_list,
-        Swimd_Folder_Struct* root_folder) {
+        SwimdFileList* file_list,
+        SwimdFolderStruct* root_folder) {
 
     char root_mask[MAX_PATH_LENGTH];
     char inner_folder[MAX_PATH_LENGTH];
@@ -251,7 +251,7 @@ void swimd_list_directories(const char* root_dir,
                 char* folder_name = malloc((current_file_len + 1) * sizeof(char));
                 strcpy(folder_name, current_file);
 
-                Swimd_Folder_Struct* folder_node = malloc(sizeof(Swimd_Folder_Struct));
+                SwimdFolderStruct* folder_node = malloc(sizeof(SwimdFolderStruct));
 
                 folder_node->name = folder_name;
                 folder_node->name_length = current_file_len;
@@ -270,13 +270,13 @@ void swimd_list_directories(const char* root_dir,
             char* file_name = malloc((current_file_len + 1) * sizeof(char));
             strcpy(file_name, current_file);
 
-            Swimd_File file_node = {
+            SwimdFile file_node = {
                 .name = file_name,
                 .name_length = current_file_len,
                 .folder = root_folder
             };
 
-            swimd_filelist_append(file_list, file_node);
+            SwimdFilelist_append(file_list, file_node);
         }
 
         if (FindNextFile(h_find, &find_file_data) == 0)
@@ -296,9 +296,9 @@ void swimd_list_directories(const char* root_dir,
     FindClose(h_find);
 }
 
-void swimd_list_directories_folders_free(Swimd_Folder_Struct* root_folder) {
+void swimd_list_directories_folders_free(SwimdFolderStruct* root_folder) {
     for (int i = 0; i < root_folder->folder_lst.length; i++) {
-        Swimd_Folder_Struct* folder = root_folder->folder_lst.arr[i];
+        SwimdFolderStruct* folder = root_folder->folder_lst.arr[i];
         swimd_list_directories_folders_free(folder);
         swimd_folders_free(&folder->folder_lst);
         free(folder->name);
@@ -306,19 +306,19 @@ void swimd_list_directories_folders_free(Swimd_Folder_Struct* root_folder) {
     }
 }
 
-void swimd_list_directories_free(const Swimd_File_List* lst,
-        Swimd_Folder_Struct* root_folder) {
+void swimd_list_directories_free(const SwimdFileList* lst,
+        SwimdFolderStruct* root_folder) {
     swimd_list_directories_folders_free(root_folder);
     for (int i = 0; i < lst->length; i++) {
         free(lst->arr[i].name);
     }
 }
 
-void swimd_prep_files_vec(Swimd_Algo_State* state) {
-    Swimd_File_List files = state->files;
+void swimd_prep_files_vec(SwimdAlgoState* state) {
+    SwimdFileList files = state->files;
     int files_length = files.length;
     int files_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
-    Swimd_File_Vec* files_vec = malloc(files_vec_length * sizeof(Swimd_File_Vec));
+    SwimdFileVec* files_vec = malloc(files_vec_length * sizeof(SwimdFileVec));
 
     for (int i = 0; i < files_vec_length; i++) {
         int max_length = 0;
@@ -336,13 +336,13 @@ void swimd_prep_files_vec(Swimd_Algo_State* state) {
             for (int j = 0; j < LANES_COUNT_SHORT; j++) {
                 if (i * LANES_COUNT_SHORT + j >= files_length)
                     break;
-                Swimd_File file = files.arr[i * LANES_COUNT_SHORT + j];
+                SwimdFile file = files.arr[i * LANES_COUNT_SHORT + j];
                 if (k >= file.name_length)
                     continue;
                 file_vec_arr[k * LANES_COUNT_SHORT + j] = (short)file.name[k];
             }
         }
-        files_vec[i] = (Swimd_File_Vec){
+        files_vec[i] = (SwimdFileVec){
             .arr = file_vec_arr,
             .length = file_vec_length,
         };
@@ -351,15 +351,15 @@ void swimd_prep_files_vec(Swimd_Algo_State* state) {
     state->files_vec_length = files_vec_length;
 }
 
-void swimd_prep_files_vec_free(Swimd_Algo_State* state) {
+void swimd_prep_files_vec_free(SwimdAlgoState* state) {
     for (int i = 0; i < state->files_vec_length; i++) {
-        Swimd_File_Vec file_vec = state->files_vec[i];
+        SwimdFileVec file_vec = state->files_vec[i];
         free(file_vec.arr);
     }
     free(state->files_vec);
 }
 
-void swimd_prep_needle_vec(Swimd_Algo_State* state) {
+void swimd_prep_needle_vec(SwimdAlgoState* state) {
     int needle_vec_length = state->needle_length * LANES_COUNT_SHORT;
     short* needle_vec = malloc(needle_vec_length * sizeof(short));
     for (int i = 0; i < state->needle_length; i++) {
@@ -371,7 +371,7 @@ void swimd_prep_needle_vec(Swimd_Algo_State* state) {
     state->needle_vec_length = needle_vec_length;
 }
 
-void swimd_prep_needle_vec_free(Swimd_Algo_State* state) {
+void swimd_prep_needle_vec_free(SwimdAlgoState* state) {
     free(state->needle_vec);
 }
 
@@ -390,7 +390,7 @@ void swimd_setup_needle_free(void) {
     swimd_prep_needle_vec_free(&swimd_state);
 }
 
-void swimd_prep_d_vec(Swimd_Algo_State* state) {
+void swimd_prep_d_vec(SwimdAlgoState* state) {
     memset(state->d_vec, 0, MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
     for (int i = 1; i < MAX_PATH_LENGTH; i++) {
         short value = state->d_vec[(i - 1) * MAX_PATH_LENGTH * LANES_COUNT_SHORT];
@@ -408,7 +408,7 @@ void swimd_prep_d_vec(Swimd_Algo_State* state) {
     }
 }
 
-void swimd_vec_estimate(Swimd_Algo_Matrix* d,
+void swimd_vec_estimate(SwimdAlgoMatrix* d,
     short* a,
     int a_len,
     short* b,
@@ -478,26 +478,26 @@ void swimd_simd_scores(void) {
     }
 }
 
-void swimd_scores_init(Swimd_Algo_State* state) {
+void swimd_scores_init(SwimdAlgoState* state) {
     state->scores = malloc(state->files_vec_length * LANES_COUNT_SHORT * sizeof(short));
     state->scores_length = state->files_vec_length * LANES_COUNT_SHORT;
 }
 
-void swimd_scores_free(Swimd_Algo_State* state) {
+void swimd_scores_free(SwimdAlgoState* state) {
     free(state->scores);
 }
 
-void swimd_scores_heap_init(Swimd_Scores_Heap* scores_heap, int max_size) {
-    scores_heap->arr = malloc(max_size * sizeof(Swimd_Scores_Heap_Item));
+void SwimdScoresHeap_init(SwimdScoresHeap* scores_heap, int max_size) {
+    scores_heap->arr = malloc(max_size * sizeof(SwimdScoresHeapItem));
     scores_heap->size = 0;
     scores_heap->max_size = max_size;
 }
 
-void swimd_scores_heap_free(Swimd_Scores_Heap* scores_heap) {
+void SwimdScoresHeap_free(SwimdScoresHeap* scores_heap) {
     free(scores_heap->arr);
 }
 
-void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
+void SwimdScoresHeap_cut_head(SwimdScoresHeap* scores_heap) {
     scores_heap->size--;
     scores_heap->arr[0] = scores_heap->arr[scores_heap->size];
 
@@ -508,7 +508,7 @@ void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
             scores_heap->arr[ind].score > scores_heap->arr[left_ind].score) {
             SWAP(scores_heap->arr[ind],
                     scores_heap->arr[left_ind],
-                    Swimd_Scores_Heap_Item);
+                    SwimdScoresHeapItem);
             ind = left_ind;
             continue;
         }
@@ -518,7 +518,7 @@ void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
             scores_heap->arr[ind].score > scores_heap->arr[right_ind].score) {
             SWAP(scores_heap->arr[ind],
                     scores_heap->arr[right_ind],
-                    Swimd_Scores_Heap_Item);
+                    SwimdScoresHeapItem);
             ind = right_ind;
             continue;
         }
@@ -526,7 +526,7 @@ void swimd_scores_heap_cut_head(Swimd_Scores_Heap* scores_heap) {
     }
 }
 
-void swimd_scores_heap_insert(Swimd_Scores_Heap* scores_heap, Swimd_Scores_Heap_Item item) {
+void SwimdScoresHeap_insert(SwimdScoresHeap* scores_heap, SwimdScoresHeapItem item) {
     if (scores_heap->size == 0) {
         scores_heap->size++;
         scores_heap->arr[0] = item;
@@ -537,7 +537,7 @@ void swimd_scores_heap_insert(Swimd_Scores_Heap* scores_heap, Swimd_Scores_Heap_
         {
             return;
         }
-        swimd_scores_heap_cut_head(scores_heap);
+        SwimdScoresHeap_cut_head(scores_heap);
     }
     scores_heap->arr[scores_heap->size] = item;
     int ind = scores_heap->size;
@@ -549,7 +549,7 @@ void swimd_scores_heap_insert(Swimd_Scores_Heap* scores_heap, Swimd_Scores_Heap_
         if (scores_heap->arr[parent_ind].score > scores_heap-> arr[ind].score) {
             SWAP(scores_heap->arr[parent_ind],
                     scores_heap-> arr[ind],
-                    Swimd_Scores_Heap_Item);
+                    SwimdScoresHeapItem);
             ind = parent_ind;
             continue;
         }
@@ -558,35 +558,35 @@ void swimd_scores_heap_insert(Swimd_Scores_Heap* scores_heap, Swimd_Scores_Heap_
 }
 
 int swimd_compare_heap_item(const void* a, const void* b) {
-    Swimd_Scores_Heap_Item* a_item = (Swimd_Scores_Heap_Item*)a;
-    Swimd_Scores_Heap_Item* b_item = (Swimd_Scores_Heap_Item*)b;
+    SwimdScoresHeapItem* a_item = (SwimdScoresHeapItem*)a;
+    SwimdScoresHeapItem* b_item = (SwimdScoresHeapItem*)b;
     if (a_item->score == b_item->score)
         return 0;
     return a_item->score > b_item->score ? 1 : -1;
 }
 
 void swimd_top_scores(int n) {
-    swimd_scores_heap_init(&swimd_state.scores_heap, n);
+    SwimdScoresHeap_init(&swimd_state.scores_heap, n);
     for (int i = 0; i < swimd_state.files.length; i++) {
-        swimd_scores_heap_insert(&swimd_state.scores_heap, (Swimd_Scores_Heap_Item){
+        SwimdScoresHeap_insert(&swimd_state.scores_heap, (SwimdScoresHeapItem){
                 .score = swimd_state.scores[i],
                 .index = i
         });
     }
     qsort(swimd_state.scores_heap.arr,
             swimd_state.scores_heap.size,
-            sizeof(Swimd_Scores_Heap_Item),
+            sizeof(SwimdScoresHeapItem),
             swimd_compare_heap_item);
 }
 
 void swimd_top_scores_free(void) {
-    swimd_scores_heap_free(&swimd_state.scores_heap);
+    SwimdScoresHeap_free(&swimd_state.scores_heap);
 }
 
 void swimd_state_init(const char* root_path) {
     swimd_log_append("Scanning path started %s", root_path);
 
-    swimd_filelist_init(&swimd_state.files);
+    SwimdFilelist_init(&swimd_state.files);
     swimd_folders_init(&swimd_state.folders.folder_lst);
     swimd_list_directories(root_path,
         &swimd_state.files,
@@ -637,7 +637,7 @@ void swimd_state_free(void) {
     swimd_list_directories_free(&swimd_state.files,
             &swimd_state.folders);
     swimd_folders_free(&swimd_state.folders.folder_lst);
-    swimd_filelist_free(&swimd_state.files);
+    SwimdFilelist_free(&swimd_state.files);
 }
 
 void swimd_scan_thread_stop(void) {
@@ -689,13 +689,13 @@ void swimd_str_reverse(char* buf, int buf_length) {
     }
 }
 
-void swimd_print_path(char* buf, Swimd_File* file) {
+void swimd_print_path(char* buf, SwimdFile* file) {
     int buf_length = 0;
     for (int i = 0; i < file->name_length; i++) {
         buf[buf_length++] = file->name[file->name_length - i - 1];
     }
     buf[buf_length++] = '\\';
-    Swimd_Folder_Struct* cur_folder = file->folder;
+    SwimdFolderStruct* cur_folder = file->folder;
     while (1) {
         for (int i = 0; i < cur_folder->name_length; i++) {
             buf[buf_length++] = cur_folder->name[cur_folder->name_length - i - 1];
@@ -711,24 +711,23 @@ void swimd_print_path(char* buf, Swimd_File* file) {
 
 void swimd_process_input(const char* needle, 
         int max_size, 
-        Swimd_Process_Input_Result* result) {
+        SwimdProcessInputResult* result) {
     swimd_setup_needle(needle);
 
     swimd_simd_scores();
     swimd_top_scores(max_size);
 
-    result->items = malloc(max_size * sizeof(Swimd_Process_Input_Result_Item));
+    result->items = malloc(max_size * sizeof(SwimdProcessInputResultItem));
 
     for (int i = 0; i < swimd_state.scores_heap.size; i++) {
-        Swimd_Scores_Heap_Item heap_item = swimd_state.scores_heap.arr[i];
-        Swimd_File file = swimd_state.files.arr[heap_item.index];
-        printf("i %d\n", i);
+        SwimdScoresHeapItem heap_item = swimd_state.scores_heap.arr[i];
+        SwimdFile file = swimd_state.files.arr[heap_item.index];
 
         char path[MAX_PATH_LENGTH];
         swimd_print_path(path, &file);
         int path_length = strlen(path);
 
-        Swimd_Process_Input_Result_Item item = {0};
+        SwimdProcessInputResultItem item = {0};
         item.path = malloc((path_length + 1) * sizeof(char));
         strcpy(item.path, path);
         item.name = malloc((file.name_length + 1) * sizeof(char));
@@ -745,7 +744,7 @@ void swimd_process_input(const char* needle,
 
 void swimd_scan_process_input(const char* input, 
         int max_size, 
-        Swimd_Process_Input_Result* result) {
+        SwimdProcessInputResult* result) {
     result->scanned_items_count = swimd_state.files.length;
     if (swimd_state.scan_in_progress) {
         result->scan_in_progress = TRUE;
@@ -755,12 +754,12 @@ void swimd_scan_process_input(const char* input,
     swimd_process_input(input, max_size, result);
 }
 
-void swimd_scan_process_input_free(Swimd_Process_Input_Result* result) {
+void swimd_scan_process_input_free(SwimdProcessInputResult* result) {
     if (result->items == NULL)
         return;
 
     for (int i = 0; i < result->items_length; i++) {
-        Swimd_Process_Input_Result_Item item = result->items[i];
+        SwimdProcessInputResultItem item = result->items[i];
         free(item.path);
         free(item.name);
     }
@@ -815,7 +814,7 @@ int swimd_lua_process_input(lua_State *L) {
     const char* input = luaL_checkstring(L, 1);
     int max_size = luaL_checknumber(L, 2);
 
-    Swimd_Process_Input_Result result = {0};
+    SwimdProcessInputResult result = {0};
 
     swimd_scan_process_input(input, max_size, &result);
     lua_newtable(L);
@@ -831,7 +830,7 @@ int swimd_lua_process_input(lua_State *L) {
     lua_newtable(L);
     if (!result.scan_in_progress) {
         for (int i = 0; i < result.items_length; i++) {
-            Swimd_Process_Input_Result_Item item = result.items[i];
+            SwimdProcessInputResultItem item = result.items[i];
 
             lua_pushnumber(L, i + 1);
 
@@ -883,44 +882,42 @@ int luaopen_swimd(lua_State *L) {
 
 int main() {
     getchar();
-    while (1) {
 
     swimd_state.initialized = TRUE;
     swimd_log_init();
     swimd_scan_thread_init();
 
-    swimd_scan_setup_path("c:\\projects");
-    Swimd_Process_Input_Result result = {0};
-    swimd_scan_process_input("hello", 10, &result);
-    swimd_scan_process_input_free(&result);
-    // for (int i = 0; i < 10; i++) {
-    //     swimd_scan_setup_path("c:\\projects");
-    //     getchar();
-    //     while(1) {
-    //         Swimd_Process_Input_Result result = {0};
-    //         swimd_scan_process_input("hello", 10, &result);
-    //
-    //         if (result.scan_in_progress) {
-    //             printf("Scanning %d\n", result.scanned_items_count);
-    //         } else {
-    //             for (int i = 0; i < result.items_length; i++) {
-    //                 Swimd_Process_Input_Result_Item item = result.items[i];
-    //
-    //                 printf("name = %s, score = %d, path = %s\n",
-    //                         item.name,
-    //                         item.score,
-    //                         item.path);
-    //             }
-    //         }
-    //
-    //         swimd_scan_process_input_free(&result);
-    //         getchar();
-    //     }
-    // }
+    // swimd_scan_setup_path("c:\\projects");
+    // SwimdProcessInputResult result = {0};
+    // swimd_scan_process_input("hello", 10, &result);
+    // swimd_scan_process_input_free(&result);
+    for (int i = 0; i < 10; i++) {
+        swimd_scan_setup_path("c:\\projects");
+        getchar();
+        while(1) {
+            SwimdProcessInputResult result = {0};
+            swimd_scan_process_input("hello", 10, &result);
+
+            if (result.scan_in_progress) {
+                printf("Scanning %d\n", result.scanned_items_count);
+            } else {
+                for (int i = 0; i < result.items_length; i++) {
+                    SwimdProcessInputResultItem item = result.items[i];
+
+                    printf("name = %s, score = %d, path = %s\n",
+                            item.name,
+                            item.score,
+                            item.path);
+                }
+            }
+
+            swimd_scan_process_input_free(&result);
+            getchar();
+        }
+    }
     swimd_scan_thread_stop();
     swimd_log_free();
 
-    }
     printf("Over\n");
     return 0;
 }
