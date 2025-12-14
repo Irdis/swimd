@@ -199,7 +199,7 @@ void swimd_folders_free(SwimdFolderStructList* lst) {
     free(lst->arr);
 }
 
-void SwimdFilelist_init(SwimdFileList* lst) {
+void swimd_file_list_init(SwimdFileList* lst) {
     int default_size = 4;
     lst->arr = malloc(default_size * sizeof(SwimdFile));
     lst->length = 0;
@@ -586,7 +586,7 @@ void swimd_top_scores_free(void) {
 void swimd_state_init(const char* root_path) {
     swimd_log_append("Scanning path started %s", root_path);
 
-    SwimdFilelist_init(&swimd_state.files);
+    swimd_file_list_init(&swimd_state.files);
     swimd_folders_init(&swimd_state.folders.folder_lst);
     swimd_list_directories(root_path,
         &swimd_state.files,
