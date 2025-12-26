@@ -487,17 +487,17 @@ void swimd_scores_free(SwimdAlgoState* state) {
     free(state->scores);
 }
 
-void SwimdScoresHeap_init(SwimdScoresHeap* scores_heap, int max_size) {
+void swimd_scores_heap_init(SwimdScoresHeap* scores_heap, int max_size) {
     scores_heap->arr = malloc(max_size * sizeof(SwimdScoresHeapItem));
     scores_heap->size = 0;
     scores_heap->max_size = max_size;
 }
 
-void SwimdScoresHeap_free(SwimdScoresHeap* scores_heap) {
+void swimd_scores_heap_free(SwimdScoresHeap* scores_heap) {
     free(scores_heap->arr);
 }
 
-void SwimdScoresHeap_cut_head(SwimdScoresHeap* scores_heap) {
+void swimd_scores_heap_cut_head(SwimdScoresHeap* scores_heap) {
     scores_heap->size--;
     scores_heap->arr[0] = scores_heap->arr[scores_heap->size];
 
@@ -526,7 +526,7 @@ void SwimdScoresHeap_cut_head(SwimdScoresHeap* scores_heap) {
     }
 }
 
-void SwimdScoresHeap_insert(SwimdScoresHeap* scores_heap, SwimdScoresHeapItem item) {
+void swimd_scores_heap_insert(SwimdScoresHeap* scores_heap, SwimdScoresHeapItem item) {
     if (scores_heap->size == 0) {
         scores_heap->size++;
         scores_heap->arr[0] = item;
@@ -537,7 +537,7 @@ void SwimdScoresHeap_insert(SwimdScoresHeap* scores_heap, SwimdScoresHeapItem it
         {
             return;
         }
-        SwimdScoresHeap_cut_head(scores_heap);
+        swimd_scores_heap_cut_head(scores_heap);
     }
     scores_heap->arr[scores_heap->size] = item;
     int ind = scores_heap->size;
@@ -566,9 +566,9 @@ int swimd_compare_heap_item(const void* a, const void* b) {
 }
 
 void swimd_top_scores(int n) {
-    SwimdScoresHeap_init(&swimd_state.scores_heap, n);
+    swimd_scores_heap_init(&swimd_state.scores_heap, n);
     for (int i = 0; i < swimd_state.files.length; i++) {
-        SwimdScoresHeap_insert(&swimd_state.scores_heap, (SwimdScoresHeapItem){
+        swimd_scores_heap_insert(&swimd_state.scores_heap, (SwimdScoresHeapItem){
                 .score = swimd_state.scores[i],
                 .index = i
         });
@@ -580,7 +580,7 @@ void swimd_top_scores(int n) {
 }
 
 void swimd_top_scores_free(void) {
-    SwimdScoresHeap_free(&swimd_state.scores_heap);
+    swimd_scores_heap_free(&swimd_state.scores_heap);
 }
 
 void swimd_state_init(const char* root_path) {
@@ -612,7 +612,6 @@ DWORD WINAPI swimd_scan_loop(LPVOID lp_param) {
         ResetEvent(swimd_state.scan_finished);
 
         swimd_state_init(swimd_state.scan_path);
-
         swimd_state.scan_in_progress = FALSE;
         SetEvent(swimd_state.scan_finished);
     }
