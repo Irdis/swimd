@@ -206,7 +206,7 @@ void swimd_file_list_init(SwimdFileList* lst) {
     lst->capacity = default_size;
 }
 
-void SwimdFilelist_append(SwimdFileList* lst, SwimdFile file) {
+void swimd_file_list_append(SwimdFileList* lst, SwimdFile file) {
     if (lst->length == lst->capacity) {
         lst->capacity = lst->capacity * 2;
         lst->arr = realloc(lst->arr, lst->capacity * sizeof(SwimdFile));
@@ -276,7 +276,7 @@ void swimd_list_directories(const char* root_dir,
                 .folder = root_folder
             };
 
-            SwimdFilelist_append(file_list, file_node);
+            swimd_file_list_append(file_list, file_node);
         }
 
         if (FindNextFile(h_find, &find_file_data) == 0)
