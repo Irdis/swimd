@@ -217,7 +217,7 @@ void swimd_file_list_append(SwimdFileList* lst, SwimdFile file) {
         swimd_log_append("Scanned file count %d", lst->length);
 }
 
-void SwimdFilelist_free(SwimdFileList* lst) {
+void swimd_file_list_free(SwimdFileList* lst) {
     lst->length = 0;
     free(lst->arr);
 }
@@ -636,7 +636,7 @@ void swimd_state_free(void) {
     swimd_list_directories_free(&swimd_state.files,
             &swimd_state.folders);
     swimd_folders_free(&swimd_state.folders.folder_lst);
-    SwimdFilelist_free(&swimd_state.files);
+    swimd_file_list_free(&swimd_state.files);
 }
 
 void swimd_scan_thread_stop(void) {
