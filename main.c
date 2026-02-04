@@ -123,9 +123,14 @@ typedef struct {
 
 static SwimdAlgoState swimd_state = {0};
 static FILE* swimd_log = {0};
+static BOOL swimd_log_enabled = FALSE;
 
-void swimd_log_init(void) {
-    swimd_log = fopen("swimd.log", "a");
+void swimd_log_init(const char* log_path) {
+    if (log_path == NULL) {
+        return;
+    }
+    swimd_log_enabled = TRUE;
+    swimd_log = fopen(log_path, "a");
     if (swimd_log == NULL) {
         fprintf(stderr, "Unable to init log file");
         exit(1);
@@ -133,10 +138,17 @@ void swimd_log_init(void) {
 }
 
 void swimd_log_free(void) {
+    if (!swimd_log_enabled) {
+        return;
+    }
+    swimd_log_enabled = FALSE;
     fclose(swimd_log);
 }
 
 void swimd_log_append(const char* msg, ...) {
+    if (!swimd_log_enabled) {
+        return;
+    }
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
     time_t seconds = ts.tv_sec;
@@ -781,6 +793,7 @@ void swimd_print_path(char* buf, SwimdFile* file) {
         buf[buf_length++] = '\\';
         cur_folder = cur_folder->parent;
     }
+    buf_length--;
     swimd_str_reverse(buf, buf_length);
     buf[buf_length++] = '\0';
 }
@@ -812,6 +825,11 @@ void swimd_process_input(const char* needle,
 
         result->items[result->items_length] = item;
         result->items_length++;
+    }
+
+    for (int i = 0; i < result->items_length / 2; i++) {
+        SWAP(result->items[i], result->items[result->items_length - i - 1],
+            SwimdProcessInputResultItem);
     }
 
     swimd_top_scores_free();
@@ -855,7 +873,9 @@ int swimd_lua_init(lua_State *L) {
     }
     swimd_state.initialized = TRUE;
 
-    swimd_log_init();
+    const char* log_path = lua_isnil(L, 1) ? NULL : luaL_checkstring(L, 1);
+
+    swimd_log_init(log_path);
 
     swimd_log_append("Initializing");
 
@@ -956,6 +976,12 @@ int swimd_lua_sayhello(lua_State *L) {
     return 1;
 }
 
+int swimd_lua_log(lua_State *L) {
+    const char* str = luaL_checkstring(L, 1);
+    swimd_log_append("[swimd-lua]: %s", str);
+    return 1;
+}
+
 __declspec(dllexport)
 int luaopen_swimd(lua_State *L) {
     static const luaL_Reg funcs[] = {
@@ -965,6 +991,7 @@ int luaopen_swimd(lua_State *L) {
         {"process_input", swimd_lua_process_input},
         {"shutdown", swimd_lua_shutdown},
         {"say_hello", swimd_lua_sayhello},
+        {"log", swimd_lua_log},
 
         {NULL, NULL}
     };
@@ -975,7 +1002,7 @@ int luaopen_swimd(lua_State *L) {
 int main() {
 
     swimd_state.initialized = TRUE;
-    swimd_log_init();
+    swimd_log_init("swimd.log");
     swimd_scan_thread_init();
 
     // swimd_scan_setup_path("c:\\projects");
@@ -986,7 +1013,7 @@ int main() {
         swimd_scan_setup_path("c:\\projects");
         while(1) {
             SwimdProcessInputResult result = {0};
-            swimd_scan_process_input("main", 10, &result);
+            swimd_scan_process_input("swimd", 10, &result);
 
             if (result.scan_in_progress) {
                 printf("Scanning %d\n", result.scanned_items_count);
@@ -1002,6 +1029,7 @@ int main() {
             }
 
             swimd_scan_process_input_free(&result);
+            getchar();
         }
     }
     swimd_scan_thread_stop();
