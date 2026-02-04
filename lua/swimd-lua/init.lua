@@ -14,7 +14,7 @@ M.log_path = function ()
     local source = debug.getinfo(1, "S").source:sub(2)
     local plugin_dir = vim.fn.fnamemodify(source, ":p:h")
     local result = plugin_dir .. '/../../swimd.log';
-    return nil
+    return result
 end
 
 M.set_cpath = function ()
