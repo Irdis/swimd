@@ -6,6 +6,7 @@ INCLUDES = \
 	-I"c:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared" \
 	-I"lualib\include"
 CFLAGS = -nologo
+LFLAGS = -DEBUG
 LIBPATHS = \
 	-LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\lib\x64" \
 	-LIBPATH:"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.50.35717\lib\x64" \
@@ -17,10 +18,10 @@ LIBPATHS = \
 all: main_lib main_exe
 
 main_lib:
-	$(CC) main.c -LD $(CFLAGS) -ZI $(INCLUDES) -link $(LIBPATHS) -out:swimd.dll -DEBUG
+	$(CC) main.c -LD $(CFLAGS) -ZI $(INCLUDES) -link $(LIBPATHS) -out:swimd.dll $(LFLAGS)
 
 main_exe:
-	$(CC) main.c -DDEBUG_PRINT $(CFLAGS) -ZI $(INCLUDES) -link -out:swimd.exe $(LIBPATHS) -DEBUG
+	$(CC) main.c -DDEBUG_PRINT $(CFLAGS) -ZI $(INCLUDES) -link -out:swimd.exe $(LIBPATHS) $(LFLAGS)
 
 clean:
 	del *.exe *.exp *.lib *.obj *.dll *.pdb *.idb *.ilk
