@@ -1,7 +1,7 @@
 local M = {}
 
 M.setup = function()
-    M.set_cpath();
+    M.load_libs();
 
     local swimd = require("swimd")
     swimd.init(M.log_path())
@@ -13,20 +13,35 @@ end
 M.log_path = function ()
     local source = debug.getinfo(1, "S").source:sub(2)
     local plugin_dir = vim.fn.fnamemodify(source, ":p:h")
-    local result = plugin_dir .. '/../../swimd.log';
+    local result = plugin_dir .. '/../../swimd.log'
     return result
 end
 
-M.set_cpath = function ()
+M.load_libs = function ()
     local swimd_path = M.lib_path()
+    local swimd_depenecies = M.dependent_libs()
+    for _, deps in ipairs(swimd_depenecies) do
+        package.loadlib(deps, '')
+    end
     package.cpath = package.cpath .. ';' .. swimd_path
 end
 
 M.lib_path = function ()
+    local plugin_dir = M.plugin_root()
+    local result = plugin_dir .. '/../../?.dll'
+    return result
+end
+
+M.dependent_libs = function ()
+    local plugin_dir = M.plugin_root()
+    local result = plugin_dir .. '/../../git2.dll'
+    return { result }
+end
+
+M.plugin_root = function ()
     local source = debug.getinfo(1, "S").source:sub(2)
     local plugin_dir = vim.fn.fnamemodify(source, ":p:h")
-    local result = plugin_dir .. '/../../?.dll';
-    return result
+    return plugin_dir
 end
 
 M.open_picker = function ()

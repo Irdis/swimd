@@ -6,6 +6,7 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "time.h"
+#include "git2.h"
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
@@ -999,7 +1000,29 @@ int luaopen_swimd(lua_State *L) {
     return 1;
 }
 
-int main() {
+void swimd_git_check_lg2(int error, const char *message, const char *extra) {
+    const git_error *lg2err;
+    const char *lg2msg = "", *lg2spacer = "";
+
+    if (!error)
+        return;
+
+    if ((lg2err = git_error_last()) != NULL && lg2err->message != NULL) {
+        lg2msg = lg2err->message;
+        lg2spacer = " - ";
+    }
+
+    if (extra)
+        fprintf(stderr, "%s '%s' [%d]%s%s\n",
+                message, extra, error, lg2spacer, lg2msg);
+    else
+        fprintf(stderr, "%s [%d]%s%s\n",
+                message, error, lg2spacer, lg2msg);
+
+    exit(1);
+}
+
+void swimd_scenario_scanning(void) {
 
     swimd_state.initialized = TRUE;
     swimd_log_init("swimd.log");
@@ -1036,6 +1059,68 @@ int main() {
     swimd_log_free();
 
     printf("Over\n");
+}
+
+static void swimd_git_print_index_paths(git_repository* repo) {
+    git_index *index = NULL;
+
+	git_repository_index(&index, repo);
+
+    size_t entry_count = git_index_entrycount(index);
+
+    for (int i = 0; i < entry_count; i++) {
+        const git_index_entry *entry = git_index_get_byindex(index, i);
+        printf("%s\n", entry->path);
+    }
+	git_index_free(index);
+}
+
+static void swimd_git_print_status_paths(git_repository* repo) {
+
+    git_status_options status_opts = GIT_STATUS_OPTIONS_INIT;
+    status_opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
+    status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | 
+                        GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
+
+    git_status_list *status_list = NULL;
+    git_status_list_new(&status_list, repo, &status_opts);    
+
+    size_t count = git_status_list_entrycount(status_list);
+    for (size_t i = 0; i < count; i++) {
+        const git_status_entry *entry = git_status_byindex(status_list, i);
+        const char *path = path = entry->index_to_workdir->new_file.path;
+        printf("%s\n", path);
+    }
+
+    git_status_list_free(status_list);
+}
+
+int main() {
+    // swimd_scenario_scanning();
+
+    git_repository *repo = NULL;
+
+    git_libgit2_init();
+
+    char git_dir[] = "C:\\Projects\\NoogleNvim\\lua";
+
+    int repo_result = git_repository_open_ext(&repo, git_dir, 0, NULL);
+    if (repo_result == GIT_ENOTFOUND) {
+        printf("Not in repo\n");
+        return 0;
+    } else {
+        swimd_git_check_lg2(repo_result, "Unable to open repository", git_dir);
+    }
+
+    const char* repo_path = git_repository_path(repo);
+    printf("repo: %s\n", repo_path);
+
+    swimd_git_print_index_paths(repo);
+    printf("---------------\n");
+    swimd_git_print_status_paths(repo);
+
+    git_repository_free(repo);
+    git_libgit2_shutdown();
 
     return 0;
 }
