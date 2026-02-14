@@ -1102,7 +1102,8 @@ int main() {
 
     git_libgit2_init();
 
-    char git_dir[] = "C:\\Projects\\NoogleNvim\\lua";
+    // char git_dir[] = "C:\\Projects\\NoogleNvim";
+    char git_dir[] = "C:\\Projects\\swimd";
 
     int repo_result = git_repository_open_ext(&repo, git_dir, 0, NULL);
     if (repo_result == GIT_ENOTFOUND) {
@@ -1115,9 +1116,11 @@ int main() {
     const char* repo_path = git_repository_path(repo);
     printf("repo: %s\n", repo_path);
 
+    printf("---------------\n");
     swimd_git_print_index_paths(repo);
     printf("---------------\n");
     swimd_git_print_status_paths(repo);
+    printf("---------------\n");
 
     git_repository_free(repo);
     git_libgit2_shutdown();
