@@ -65,9 +65,7 @@ M.configure_snacks = function()
             else
                 for _, swimd_item in ipairs(res.items) do
                     local item = {
-                        text = swimd_item.name,
-                        file = swimd_item.path,
-                        score = swimd_item.score,
+                        file = './' .. swimd_item.path,
                     }
                     items[#items + 1] = item
                 end

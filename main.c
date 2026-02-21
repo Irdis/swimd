@@ -126,6 +126,10 @@ static SwimdAlgoState swimd_state = {0};
 static FILE* swimd_log = {0};
 static BOOL swimd_log_enabled = FALSE;
 
+void swimd_git2_init(void) {
+    git_libgit2_init();
+}
+
 void swimd_log_init(const char* log_path) {
     if (log_path == NULL) {
         return;
@@ -138,12 +142,26 @@ void swimd_log_init(const char* log_path) {
     }
 }
 
+void swimd_global_init(const char* log_path) {
+    swimd_log_init(log_path);
+    swimd_git2_init();
+}
+
 void swimd_log_free(void) {
     if (!swimd_log_enabled) {
         return;
     }
     swimd_log_enabled = FALSE;
     fclose(swimd_log);
+}
+
+void swimd_git2_free(void) {
+    git_libgit2_shutdown();
+}
+
+void swimd_global_free(void) {
+    swimd_git2_free();
+    swimd_log_free();
 }
 
 void swimd_log_append(const char* msg, ...) {
@@ -158,22 +176,22 @@ void swimd_log_append(const char* msg, ...) {
 
 #ifdef DEBUG_PRINT
     printf("%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
-        t->tm_year+1900, 
-        t->tm_mon+1, 
+        t->tm_year+1900,
+        t->tm_mon+1,
         t->tm_mday,
-        t->tm_hour, 
-        t->tm_min, 
+        t->tm_hour,
+        t->tm_min,
         t->tm_sec,
         ts.tv_nsec
     );
 #endif
 
     fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
-        t->tm_year+1900, 
-        t->tm_mon+1, 
+        t->tm_year+1900,
+        t->tm_mon+1,
         t->tm_mday,
-        t->tm_hour, 
-        t->tm_min, 
+        t->tm_hour,
+        t->tm_min,
         t->tm_sec,
         ts.tv_nsec
     );
@@ -267,6 +285,7 @@ void swimd_list_directories(const char* root_dir,
             if (strcmp(current_file, ".") != 0 && strcmp(current_file, "..") != 0) {
                 char* folder_name = malloc((current_file_len + 1) * sizeof(char));
                 strcpy(folder_name, current_file);
+                folder_name[current_file_len] = '\0';
 
                 SwimdFolderStruct* folder_node = malloc(sizeof(SwimdFolderStruct));
 
@@ -286,6 +305,7 @@ void swimd_list_directories(const char* root_dir,
         } else {
             char* file_name = malloc((current_file_len + 1) * sizeof(char));
             strcpy(file_name, current_file);
+            file_name[current_file_len] = '\0';
 
             SwimdFile file_node = {
                 .name = file_name,
@@ -315,6 +335,247 @@ void swimd_list_directories(const char* root_dir,
     }
 
     FindClose(h_find);
+}
+
+void swimd_log_git2_error(const char* message, int error) {
+    const char *lg2msg = "";
+
+    if (!error)
+        return;
+
+    const git_error* lg2err = git_error_last();
+    if (lg2err != NULL && lg2err->message != NULL) {
+        lg2msg = lg2err->message;
+    }
+
+    swimd_log_append("%s [%d] %s", message, error, lg2msg);
+}
+
+static int swimd_path_match_depth(const char* a, const char* b) {
+    int match_depth = 0;
+    int ind = 0;
+    while (1) {
+        if (a[ind] == '\0' || b[ind] == '\0') {
+            return match_depth;
+        }
+        if (a[ind] != b[ind]) {
+            return match_depth;
+        }
+        if (a[ind] == '/') {
+            match_depth++;
+        }
+        ind++;
+    }
+}
+
+static SwimdFolderStruct* swimd_folder_go_up(SwimdFolderStruct* folder,
+        int up_count) {
+    while (up_count > 0) {
+        folder = folder->parent;
+        up_count--;
+    }
+    return folder;
+}
+
+static const char* swimd_path_skip_folder_count(const char* path,
+        int folder_count) {
+    while (folder_count > 0) {
+        if (*path == '/') {
+            folder_count--;
+        }
+        path++;
+    }
+    return path;
+}
+
+static SwimdFolderStruct* swimd_folder_find_child(const char* child_name,
+        int child_name_length,
+        SwimdFolderStruct* cur_folder) {
+    for (int i = 0; i < cur_folder->folder_lst.length; i++) {
+        SwimdFolderStruct* child_folder = cur_folder->folder_lst.arr[i];
+        if (child_folder->name_length == child_name_length &&
+                strncmp(child_name, child_folder->name, child_name_length) == 0) {
+            return child_folder;
+        }
+    }
+    return NULL;
+}
+
+static SwimdFolderStruct* swimd_process_path(const char* path,
+        SwimdFileList* file_list,
+        SwimdFolderStruct* cur_folder,
+        const char* cur_path,
+        int cur_depth,
+        int* res_depth,
+        BOOL refreshing) {
+    int match_depth = swimd_path_match_depth(path, cur_path);
+    int up_count = cur_depth - match_depth;
+    *res_depth = cur_depth - up_count;
+
+    SwimdFolderStruct* base_folder = swimd_folder_go_up(cur_folder, up_count);
+    const char* base_path = swimd_path_skip_folder_count(path, match_depth);
+
+    int segment_len = 0;
+    while (1) {
+        if (base_path[segment_len] == '\0') {
+            char* file_name = malloc((segment_len + 1) * sizeof(char));
+            strncpy(file_name, base_path, segment_len);
+            file_name[segment_len] = '\0';
+
+            SwimdFile file_node = {
+                .name = file_name,
+                .name_length = segment_len,
+                .folder = base_folder
+            };
+
+            swimd_file_list_append(file_list, file_node);
+
+            if (!refreshing)
+                swimd_state.scan_files_count++;
+            else
+                swimd_state.scan_files_refresh_count++;
+
+            break;
+        }
+
+        if (base_path[segment_len] =='/') {
+            (*res_depth)++;
+
+            SwimdFolderStruct* child_folder = swimd_folder_find_child(base_path,
+                    segment_len,
+                    base_folder);
+            if (child_folder != NULL) {
+                base_path += segment_len + 1;
+                segment_len = 0;
+                base_folder = child_folder;
+                continue;
+            } 
+
+            char* folder_name = malloc((segment_len + 1) * sizeof(char));
+            strncpy(folder_name, base_path, segment_len);
+            folder_name[segment_len] = '\0';
+
+            SwimdFolderStruct* folder_node = malloc(sizeof(SwimdFolderStruct));
+
+            folder_node->name = folder_name;
+            folder_node->name_length = segment_len;
+            folder_node->parent = base_folder;
+
+            swimd_folders_init(&folder_node->folder_lst);
+            swimd_folders_append(&base_folder->folder_lst, folder_node);
+
+            base_path += segment_len + 1;
+            segment_len = 0;
+            base_folder = folder_node;
+            continue;
+        }
+        segment_len++;
+    }
+    return base_folder;
+}
+
+static void swimd_git_collect_index_paths(git_repository* repo,
+        SwimdFileList* file_list,
+        SwimdFolderStruct* root_folder,
+        BOOL refreshing) {
+    git_index *index = NULL;
+
+	int index_result = git_repository_index(&index, repo);
+    if (index_result < 0) {
+        swimd_log_git2_error("Unable to index git repository", index_result);
+        goto cleanup;
+    }
+
+    size_t entry_count = git_index_entrycount(index);
+
+    SwimdFolderStruct* cur_folder = root_folder;
+    int cur_depth = 0;
+    char cur_path[MAX_PATH_LENGTH] = "";
+
+    for (int i = 0; i < entry_count; i++) {
+        const git_index_entry *entry = git_index_get_byindex(index, i);
+        int depth = 0;
+        cur_folder = swimd_process_path(entry->path,
+            file_list,
+            cur_folder,
+            cur_path,
+            cur_depth,
+            &depth,
+            refreshing);
+        cur_depth = depth;
+        strcpy(cur_path, entry->path);
+    }
+
+cleanup:
+	git_index_free(index);
+}
+
+static void swimd_git_collect_status_paths(git_repository* repo,
+        SwimdFileList* file_list,
+        SwimdFolderStruct* root_folder,
+        BOOL refreshing) {
+    git_status_options status_opts = GIT_STATUS_OPTIONS_INIT;
+    status_opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
+    status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED |
+                        GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
+
+    git_status_list *status_list = NULL;
+    int list_result = git_status_list_new(&status_list, repo, &status_opts);
+    if (list_result < 0) {
+        swimd_log_git2_error("Unable to index git repository", list_result);
+        goto cleanup;
+    }
+
+    SwimdFolderStruct* cur_folder = root_folder;
+    int cur_depth = 0;
+    char cur_path[MAX_PATH_LENGTH] = "";
+
+    size_t count = git_status_list_entrycount(status_list);
+    for (size_t i = 0; i < count; i++) {
+        const git_status_entry *entry = git_status_byindex(status_list, i);
+        const char *path = path = entry->index_to_workdir->new_file.path;
+        if ((entry->status & GIT_STATUS_WT_NEW) > 0) {
+            int depth = 0;
+            cur_folder = swimd_process_path(path,
+                file_list,
+                cur_folder,
+                cur_path,
+                cur_depth,
+                &depth,
+                refreshing);
+            cur_depth = depth;
+            strcpy(cur_path, path);
+        }
+    }
+cleanup:
+    git_status_list_free(status_list);
+}
+
+void swimd_list_git(const char* root_dir,
+        SwimdFileList* file_list,
+        SwimdFolderStruct* root_folder,
+        BOOL refreshing) {
+
+    git_repository *repo = NULL;
+
+    int repo_result = git_repository_open_ext(&repo, root_dir, 0, NULL);
+    if (repo_result == GIT_ENOTFOUND) {
+        swimd_log_append("Not a git repository %s", root_dir);
+        goto cleanup;
+    } else if (repo_result < 0) {
+        swimd_log_git2_error("Unable to open git repository", repo_result);
+        goto cleanup;
+    }
+    swimd_git_collect_index_paths(repo,
+            file_list,
+            root_folder,
+            refreshing);
+    swimd_git_collect_status_paths(repo,
+            file_list,
+            root_folder,
+            refreshing);
+cleanup:
+    git_repository_free(repo);
 }
 
 void swimd_list_directories_folders_free(SwimdFolderStruct* root_folder) {
@@ -631,7 +892,8 @@ void swimd_state_init(const char* root_path) {
 
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
-    swimd_list_directories(root_path, files, folders, FALSE);
+    // swimd_list_directories(root_path, files, folders, FALSE);
+    swimd_list_git(root_path, files, folders, FALSE);
 
     EnterCriticalSection(&swimd_state.scan_state_swap);
 
@@ -656,7 +918,8 @@ void swimd_state_refresh(const char* root_path) {
 
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
-    swimd_list_directories(root_path, files, folders, TRUE);
+    // swimd_list_directories(root_path, files, folders, TRUE);
+    swimd_list_git(root_path, files, folders, TRUE);
 
     EnterCriticalSection(&swimd_state.scan_state_swap);
     swimd_state_free();
@@ -757,7 +1020,7 @@ void swimd_scan_setup_path(const char* scan_path) {
     swimd_state.scan_files_refresh_count = 0;
     SetEvent(swimd_state.scan_begin);
     // need to wait until we start scanning, in order not to messup in cleanup when state has been not initialized
-    WaitForSingleObject(swimd_state.scan_started, INFINITE); 
+    WaitForSingleObject(swimd_state.scan_started, INFINITE);
 }
 
 void swimd_scan_refresh_path(void) {
@@ -769,7 +1032,7 @@ void swimd_scan_refresh_path(void) {
     swimd_state.scan_files_refresh_count = 0;
     SetEvent(swimd_state.scan_begin);
     // same
-    WaitForSingleObject(swimd_state.scan_started, INFINITE); 
+    WaitForSingleObject(swimd_state.scan_started, INFINITE);
 }
 
 void swimd_str_reverse(char* buf, int buf_length) {
@@ -799,8 +1062,8 @@ void swimd_print_path(char* buf, SwimdFile* file) {
     buf[buf_length++] = '\0';
 }
 
-void swimd_process_input(const char* needle, 
-        int max_size, 
+void swimd_process_input(const char* needle,
+        int max_size,
         SwimdProcessInputResult* result) {
     swimd_setup_needle(needle);
 
@@ -837,8 +1100,8 @@ void swimd_process_input(const char* needle,
     swimd_setup_needle_free();
 }
 
-void swimd_scan_process_input(const char* input, 
-        int max_size, 
+void swimd_scan_process_input(const char* input,
+        int max_size,
         SwimdProcessInputResult* result) {
 
     EnterCriticalSection(&swimd_state.scan_state_swap);
@@ -876,7 +1139,7 @@ int swimd_lua_init(lua_State *L) {
 
     const char* log_path = lua_isnil(L, 1) ? NULL : luaL_checkstring(L, 1);
 
-    swimd_log_init(log_path);
+    swimd_global_init(log_path);
 
     swimd_log_append("Initializing");
 
@@ -896,7 +1159,7 @@ int swimd_lua_shutdown(lua_State *L) {
 
     swimd_log_append("Shutting down completed");
 
-    swimd_log_free();
+    swimd_global_free();
 
     swimd_state.initialized = FALSE;
     return 0;
@@ -958,6 +1221,7 @@ int swimd_lua_process_input(lua_State *L) {
             lua_pushstring(L, "path");
             lua_pushstring(L, item.path);
             lua_settable(L, -3);
+            swimd_log_append("\nname: '%s'\npath: '%s'", item.name, item.path);
 
             lua_settable(L, -3);
         }
@@ -1000,32 +1264,10 @@ int luaopen_swimd(lua_State *L) {
     return 1;
 }
 
-void swimd_git_check_lg2(int error, const char *message, const char *extra) {
-    const git_error *lg2err;
-    const char *lg2msg = "", *lg2spacer = "";
-
-    if (!error)
-        return;
-
-    if ((lg2err = git_error_last()) != NULL && lg2err->message != NULL) {
-        lg2msg = lg2err->message;
-        lg2spacer = " - ";
-    }
-
-    if (extra)
-        fprintf(stderr, "%s '%s' [%d]%s%s\n",
-                message, extra, error, lg2spacer, lg2msg);
-    else
-        fprintf(stderr, "%s [%d]%s%s\n",
-                message, error, lg2spacer, lg2msg);
-
-    exit(1);
-}
-
 void swimd_scenario_scanning(void) {
 
     swimd_state.initialized = TRUE;
-    swimd_log_init("swimd.log");
+    swimd_global_init("swimd.log");
     swimd_scan_thread_init();
 
     // swimd_scan_setup_path("c:\\projects");
@@ -1033,7 +1275,7 @@ void swimd_scenario_scanning(void) {
     // swimd_scan_process_input("hello", 10, &result);
     // swimd_scan_process_input_free(&result);
     for (int i = 0; i < 10; i++) {
-        swimd_scan_setup_path("c:\\projects");
+        swimd_scan_setup_path("c:\\projects\\linux");
         while(1) {
             SwimdProcessInputResult result = {0};
             swimd_scan_process_input("swimd", 10, &result);
@@ -1056,7 +1298,7 @@ void swimd_scenario_scanning(void) {
         }
     }
     swimd_scan_thread_stop();
-    swimd_log_free();
+    swimd_global_free();
 
     printf("Over\n");
 }
@@ -1076,20 +1318,21 @@ static void swimd_git_print_index_paths(git_repository* repo) {
 }
 
 static void swimd_git_print_status_paths(git_repository* repo) {
-
     git_status_options status_opts = GIT_STATUS_OPTIONS_INIT;
     status_opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
-    status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | 
+    status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED |
                         GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
 
     git_status_list *status_list = NULL;
-    git_status_list_new(&status_list, repo, &status_opts);    
+    git_status_list_new(&status_list, repo, &status_opts);
 
     size_t count = git_status_list_entrycount(status_list);
     for (size_t i = 0; i < count; i++) {
         const git_status_entry *entry = git_status_byindex(status_list, i);
         const char *path = path = entry->index_to_workdir->new_file.path;
-        printf("%s\n", path);
+        if ((entry->status & GIT_STATUS_WT_NEW) > 0) {
+            printf("%s\n", path);
+        }
     }
 
     git_status_list_free(status_list);
@@ -1097,21 +1340,23 @@ static void swimd_git_print_status_paths(git_repository* repo) {
 
 int main() {
     // swimd_scenario_scanning();
+    // return 0;
 
     git_repository *repo = NULL;
 
     git_libgit2_init();
 
-    // char git_dir[] = "C:\\Projects\\NoogleNvim";
-    char git_dir[] = "C:\\Projects\\swimd";
-
+    char git_dir[] = "C:\\Projects\\NoogleNvim";
+    // char git_dir[] = "C:\\Projects\\linux";
     int repo_result = git_repository_open_ext(&repo, git_dir, 0, NULL);
     if (repo_result == GIT_ENOTFOUND) {
         printf("Not in repo\n");
         return 0;
-    } else {
-        swimd_git_check_lg2(repo_result, "Unable to open repository", git_dir);
+    } else if (repo_result < 0) {
+        swimd_log_git2_error("Unable to open repository", repo_result);
+        return 0;
     }
+    printf("hello\n");
 
     const char* repo_path = git_repository_path(repo);
     printf("repo: %s\n", repo_path);
