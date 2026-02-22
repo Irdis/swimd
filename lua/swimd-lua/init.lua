@@ -1,5 +1,8 @@
 local M = {}
 
+local SCANNER_GIT = 0
+local SCANNER_FILES = 1
+
 M.setup = function()
     M.load_libs();
 
@@ -44,17 +47,22 @@ M.plugin_root = function ()
     return plugin_dir
 end
 
-M.open_picker = function ()
-    local snack = M.configure_snacks()
+M.open_picker_git = function ()
+    local snack = M.configure_snacks(SCANNER_GIT)
     Snacks.picker(snack)
 end
 
-M.configure_snacks = function()
+M.open_picker_files = function ()
+    local snack = M.configure_snacks(SCANNER_FILES)
+    Snacks.picker(snack)
+end
+
+M.configure_snacks = function(scanner)
     return {
         title = 'swimd-lua',
         finder = function(opts, ctx)
             local swimd = require("swimd")
-            local res = swimd.process_input(ctx.filter.search, 100)
+            local res = swimd.process_input(ctx.filter.search, 100, scanner)
 
             local items = {}
             if res.scan_in_progress then
