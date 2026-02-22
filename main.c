@@ -1221,7 +1221,6 @@ int swimd_lua_process_input(lua_State *L) {
             lua_pushstring(L, "path");
             lua_pushstring(L, item.path);
             lua_settable(L, -3);
-            swimd_log_append("\nname: '%s'\npath: '%s'", item.name, item.path);
 
             lua_settable(L, -3);
         }
