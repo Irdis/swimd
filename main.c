@@ -478,6 +478,9 @@ static void swimd_git_collect_index_paths(git_repository* repo,
         SwimdFileList* file_list,
         SwimdFolderStruct* root_folder,
         BOOL refreshing) {
+    if (swimd_state.scan_cancelled)
+        return;
+
     git_index *index = NULL;
 
 	int index_result = git_repository_index(&index, repo);
@@ -504,6 +507,9 @@ static void swimd_git_collect_index_paths(git_repository* repo,
             refreshing);
         cur_depth = depth;
         strcpy(cur_path, entry->path);
+
+        if (swimd_state.scan_cancelled)
+            break;
     }
 
 cleanup:
@@ -514,6 +520,8 @@ static void swimd_git_collect_status_paths(git_repository* repo,
         SwimdFileList* file_list,
         SwimdFolderStruct* root_folder,
         BOOL refreshing) {
+    if (swimd_state.scan_cancelled)
+        return;
     git_status_options status_opts = GIT_STATUS_OPTIONS_INIT;
     status_opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
     status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED |
@@ -546,6 +554,8 @@ static void swimd_git_collect_status_paths(git_repository* repo,
             cur_depth = depth;
             strcpy(cur_path, path);
         }
+        if (swimd_state.scan_cancelled)
+            break;
     }
 cleanup:
     git_status_list_free(status_list);
@@ -1263,8 +1273,40 @@ int luaopen_swimd(lua_State *L) {
     return 1;
 }
 
-void swimd_scenario_scanning(void) {
+void swimd_scenario_setup_path(void) {
+    swimd_state.initialized = TRUE;
+    swimd_global_init("swimd.log");
+    swimd_scan_thread_init();
 
+    for (;;) {
+        swimd_scan_setup_path("c:\\projects\\linux");
+
+        SwimdProcessInputResult result = {0};
+        swimd_scan_process_input("swimd", 10, &result);
+
+        if (result.scan_in_progress) {
+            printf("Scanning %d\n", result.scanned_items_count);
+        } else {
+            for (int i = 0; i < result.items_length; i++) {
+                SwimdProcessInputResultItem item = result.items[i];
+
+                printf("name = %s, score = %d, path = %s\n",
+                        item.name,
+                        item.score,
+                        item.path);
+            }
+        }
+
+        swimd_scan_process_input_free(&result);
+        getchar();
+    }
+    swimd_scan_thread_stop();
+    swimd_global_free();
+
+    printf("Over\n");
+}
+
+void swimd_scenario_scanning(void) {
     swimd_state.initialized = TRUE;
     swimd_global_init("swimd.log");
     swimd_scan_thread_init();
@@ -1302,72 +1344,8 @@ void swimd_scenario_scanning(void) {
     printf("Over\n");
 }
 
-static void swimd_git_print_index_paths(git_repository* repo) {
-    git_index *index = NULL;
-
-	git_repository_index(&index, repo);
-
-    size_t entry_count = git_index_entrycount(index);
-
-    for (int i = 0; i < entry_count; i++) {
-        const git_index_entry *entry = git_index_get_byindex(index, i);
-        printf("%s\n", entry->path);
-    }
-	git_index_free(index);
-}
-
-static void swimd_git_print_status_paths(git_repository* repo) {
-    git_status_options status_opts = GIT_STATUS_OPTIONS_INIT;
-    status_opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
-    status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED |
-                        GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
-
-    git_status_list *status_list = NULL;
-    git_status_list_new(&status_list, repo, &status_opts);
-
-    size_t count = git_status_list_entrycount(status_list);
-    for (size_t i = 0; i < count; i++) {
-        const git_status_entry *entry = git_status_byindex(status_list, i);
-        const char *path = path = entry->index_to_workdir->new_file.path;
-        if ((entry->status & GIT_STATUS_WT_NEW) > 0) {
-            printf("%s\n", path);
-        }
-    }
-
-    git_status_list_free(status_list);
-}
-
 int main() {
     // swimd_scenario_scanning();
-    // return 0;
-
-    git_repository *repo = NULL;
-
-    git_libgit2_init();
-
-    char git_dir[] = "C:\\Projects\\NoogleNvim";
-    // char git_dir[] = "C:\\Projects\\linux";
-    int repo_result = git_repository_open_ext(&repo, git_dir, 0, NULL);
-    if (repo_result == GIT_ENOTFOUND) {
-        printf("Not in repo\n");
-        return 0;
-    } else if (repo_result < 0) {
-        swimd_log_git2_error("Unable to open repository", repo_result);
-        return 0;
-    }
-    printf("hello\n");
-
-    const char* repo_path = git_repository_path(repo);
-    printf("repo: %s\n", repo_path);
-
-    printf("---------------\n");
-    swimd_git_print_index_paths(repo);
-    printf("---------------\n");
-    swimd_git_print_status_paths(repo);
-    printf("---------------\n");
-
-    git_repository_free(repo);
-    git_libgit2_shutdown();
-
+    swimd_scenario_setup_path();
     return 0;
 }
