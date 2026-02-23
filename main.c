@@ -17,6 +17,8 @@
 #define GAP_PENALTY 3
 #define SUB_PENALTY 2
 #define Vector __m256i
+#define D_IND(i, j) (MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i) + \
+            LANES_COUNT_SHORT * (j))
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -764,16 +766,13 @@ static void swimd_vec_estimate(SwimdAlgoMatrix* d,
         for (int j = 1; j < m; j++) {
             Vector vb = _mm256_loadu_si256((Vector const*)&b[LANES_COUNT_SHORT * (j - 1)]);
             Vector vdiag = _mm256_loadu_si256((Vector const*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) +
-                    LANES_COUNT_SHORT * (j - 1)
+                    D_IND(i - 1, j - 1)
             ]);
             Vector vup = _mm256_loadu_si256((Vector const*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i +
-                    LANES_COUNT_SHORT * (j - 1)
+                    D_IND(i, j - 1)
             ]);
             Vector vleft = _mm256_loadu_si256((Vector const*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i - 1) +
-                    LANES_COUNT_SHORT * j
+                    D_IND(i - 1, j)
             ]);
 
             Vector veq = _mm256_cmpeq_epi16(va, vb);
@@ -788,8 +787,7 @@ static void swimd_vec_estimate(SwimdAlgoMatrix* d,
             Vector o = _mm256_max_epi16(o1, o2);
             o = _mm256_max_epi16(o, o3);
             _mm256_storeu_si256((Vector*)&(*d)[
-                    MAX_PATH_LENGTH * LANES_COUNT_SHORT * i +
-                    LANES_COUNT_SHORT * j
+                    D_IND(i, j)
             ], o);
             res = _mm256_max_epi16(res, o);
         }
