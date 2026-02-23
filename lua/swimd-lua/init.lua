@@ -48,18 +48,18 @@ M.plugin_root = function ()
 end
 
 M.open_picker_git = function ()
-    local snack = M.configure_snacks(SCANNER_GIT)
+    local snack = M.configure_snacks(SCANNER_GIT, "git")
     Snacks.picker(snack)
 end
 
 M.open_picker_files = function ()
-    local snack = M.configure_snacks(SCANNER_FILES)
+    local snack = M.configure_snacks(SCANNER_FILES, "files")
     Snacks.picker(snack)
 end
 
-M.configure_snacks = function(scanner)
+M.configure_snacks = function(scanner, scanner_name)
     return {
-        title = 'swimd-lua',
+        title = 'swimd-lua ' .. scanner_name,
         finder = function(opts, ctx)
             local swimd = require("swimd")
             local res = swimd.process_input(ctx.filter.search, 100, scanner)
@@ -81,6 +81,8 @@ M.configure_snacks = function(scanner)
 
             return items
         end,
+        preview = "none",
+        layout = { preview = false },
         formatters = {
             file = {
                 filename_first = true,
