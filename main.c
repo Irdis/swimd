@@ -77,8 +77,6 @@ typedef struct {
     int capacity;
 } SwimdFileList;
 
-typedef short SwimdAlgoMatrix[MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT];
-
 typedef struct {
     short* arr;
     int length;
@@ -119,7 +117,9 @@ typedef struct {
     int scores_length;
     SwimdScoresHeap scores_heap;
 
-    SwimdAlgoMatrix d_vec;
+    short* d_vec;
+    short* gap_distr_fun;
+    short* gap_distr_sum;
 
     HANDLE scan_thread;
     HANDLE scan_begin;
@@ -492,7 +492,7 @@ static SwimdFolderStruct* swimd_process_path(const char* path,
                 segment_len = 0;
                 base_folder = child_folder;
                 continue;
-            } 
+            }
 
             char* folder_name = malloc((segment_len + 1) * sizeof(char));
             strncpy(folder_name, base_path, segment_len);
@@ -727,25 +727,7 @@ static void swimd_setup_needle_free(SwimdScanner* scanner) {
     swimd_prep_needle_vec_free(scanner);
 }
 
-static void swimd_prep_d_vec(SwimdScanner* state) {
-    memset(state->d_vec, 0, MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
-    for (int i = 1; i < MAX_PATH_LENGTH; i++) {
-        short value = state->d_vec[(i - 1) * MAX_PATH_LENGTH * LANES_COUNT_SHORT];
-        value -= GAP_PENALTY;
-        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
-            state->d_vec[i * MAX_PATH_LENGTH * LANES_COUNT_SHORT + j] = value;
-        }
-    }
-    for (int i = 1; i < MAX_PATH_LENGTH; i++) {
-        short value = state->d_vec[(i - 1) * LANES_COUNT_SHORT];
-        value -= GAP_PENALTY;
-        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
-            state->d_vec[i * LANES_COUNT_SHORT + j] = value;
-        }
-    }
-}
-
-static void swimd_vec_estimate(SwimdAlgoMatrix* d,
+static void swimd_vec_estimate(short* d,
     short* a,
     int a_len,
     short* b,
@@ -765,13 +747,13 @@ static void swimd_vec_estimate(SwimdAlgoMatrix* d,
         Vector va = _mm256_loadu_si256((Vector const*)&a[LANES_COUNT_SHORT * (i - 1)]);
         for (int j = 1; j < m; j++) {
             Vector vb = _mm256_loadu_si256((Vector const*)&b[LANES_COUNT_SHORT * (j - 1)]);
-            Vector vdiag = _mm256_loadu_si256((Vector const*)&(*d)[
+            Vector vdiag = _mm256_loadu_si256((Vector const*)&d[
                     D_IND(i - 1, j - 1)
             ]);
-            Vector vup = _mm256_loadu_si256((Vector const*)&(*d)[
+            Vector vup = _mm256_loadu_si256((Vector const*)&d[
                     D_IND(i, j - 1)
             ]);
-            Vector vleft = _mm256_loadu_si256((Vector const*)&(*d)[
+            Vector vleft = _mm256_loadu_si256((Vector const*)&d[
                     D_IND(i - 1, j)
             ]);
 
@@ -786,7 +768,7 @@ static void swimd_vec_estimate(SwimdAlgoMatrix* d,
 
             Vector o = _mm256_max_epi16(o1, o2);
             o = _mm256_max_epi16(o, o3);
-            _mm256_storeu_si256((Vector*)&(*d)[
+            _mm256_storeu_si256((Vector*)&d[
                     D_IND(i, j)
             ], o);
             res = _mm256_max_epi16(res, o);
@@ -800,7 +782,7 @@ static void swimd_vec_estimate(SwimdAlgoMatrix* d,
 static void swimd_simd_scores(SwimdScanner* scanner) {
     for (int i = 0; i < scanner->files_vec_length; i++) {
         swimd_vec_estimate(
-            &scanner->d_vec,
+            scanner->d_vec,
             scanner->needle_vec,
             scanner->needle_vec_length,
             scanner->files_vec[i].arr,
@@ -952,7 +934,6 @@ static void swimd_scanner_init(const char* root_path, SwimdScanner* scanner) {
     scanner->folders = folders;
 
     swimd_prep_files_vec(scanner);
-    swimd_prep_d_vec(scanner);
     swimd_scores_init(scanner);
 
     LeaveCriticalSection(&scanner->scan_state_swap);
@@ -980,7 +961,6 @@ static void swimd_scanner_refresh(const char* root_path, SwimdScanner* scanner) 
     scanner->scan_files_count = scanner->scan_files_refresh_count;
 
     swimd_prep_files_vec(scanner);
-    swimd_prep_d_vec(scanner);
     swimd_scores_init(scanner);
 
     LeaveCriticalSection(&scanner->scan_state_swap);
@@ -1031,6 +1011,64 @@ static void swimd_scan_thread_init(SwimdScanner* scanner) {
     InitializeCriticalSection(&scanner->scan_state_swap);
 }
 
+static void swimd_d_vec_init(SwimdScanner* scanner) {
+    scanner->d_vec = malloc(MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
+    memset(scanner->d_vec, 0, MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
+    for (int i = 1; i < MAX_PATH_LENGTH; i++) {
+        short value = scanner->d_vec[D_IND(i - 1, 0)];
+        value -= GAP_PENALTY;
+        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+            scanner->d_vec[D_IND(i, 0) + j] = value;
+        }
+    }
+    for (int i = 1; i < MAX_PATH_LENGTH; i++) {
+        short value = scanner->d_vec[D_IND(0, i - 1)];
+        value -= GAP_PENALTY;
+        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+            scanner->d_vec[D_IND(0, i) + j] = value;
+        }
+    }
+}
+
+static void swimd_d_vec_free(SwimdScanner* scanner) {
+    free(scanner->d_vec);
+}
+
+static void swimd_gap_distr_fun_linear(short* arr, int n) {
+    for (int i = 0; i < n; i++) {
+        arr[i] = -3 - i;
+    }
+}
+
+static void swimd_gap_distr_fun(short* arr, int n) {
+    swimd_gap_distr_fun_linear(arr, n);
+}
+
+static void swimd_gap_distr_sum(short* sum, short* arr, int n) {
+    sum[0] = arr[0];
+    for (int i = 1; i < n; i++) {
+        sum[i] = sum[i - 1] + arr[i];
+    }
+}
+
+static void swimd_gap_distr_init(SwimdScanner* scanner) {
+    scanner->gap_distr_fun = malloc(MAX_PATH_LENGTH * sizeof(short));
+    scanner->gap_distr_sum = malloc(MAX_PATH_LENGTH * sizeof(short));
+    swimd_gap_distr_fun(scanner->gap_distr_fun, MAX_PATH_LENGTH);
+    swimd_gap_distr_sum(scanner->gap_distr_sum, scanner->gap_distr_fun, MAX_PATH_LENGTH);
+}
+
+static void swimd_gap_distr_free(SwimdScanner* scanner) {
+    free(scanner->gap_distr_fun);
+    free(scanner->gap_distr_sum);
+}
+
+static void swimd_scan_glob_init(SwimdScanner* scanner) {
+    swimd_gap_distr_init(scanner);
+    swimd_d_vec_init(scanner);
+    swimd_scan_thread_init(scanner);
+}
+
 static void swimd_scan_path_free(SwimdScanner* scanner) {
     free(scanner->scan_path);
 }
@@ -1057,6 +1095,12 @@ static void swimd_scan_thread_stop(SwimdScanner* scanner) {
     CloseHandle(scanner->scan_thread);
 
     DeleteCriticalSection(&scanner->scan_state_swap);
+}
+
+static void swimd_scan_glob_free(SwimdScanner* scanner) {
+    swimd_scan_thread_stop(scanner);
+    swimd_gap_distr_free(scanner);
+    swimd_d_vec_free(scanner);
 }
 
 static void swimd_scan_setup_path(const char* scan_path, SwimdScanner* scanner) {
@@ -1205,7 +1249,7 @@ static int swimd_lua_init(lua_State *L) {
     swimd_log_append("Initializing");
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_thread_init(&swimd_scanners[i]);
+        swimd_scan_glob_init(&swimd_scanners[i]);
     }
 
     swimd_log_append("Initializing completed");
@@ -1219,7 +1263,7 @@ static int swimd_lua_shutdown(lua_State *L) {
     swimd_log_append("Shutting down");
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_thread_stop(&swimd_scanners[i]);
+        swimd_scan_glob_free(&swimd_scanners[i]);
     }
 
     swimd_log_append("Shutting down completed");
@@ -1338,7 +1382,7 @@ static void swimd_scenario_setup_path(void) {
     swimd_initialized = TRUE;
     swimd_global_init("swimd.log");
     SwimdScanner* git_scanner = &swimd_scanners[SCANNER_GIT];
-    swimd_scan_thread_init(git_scanner);
+    swimd_scan_glob_init(git_scanner);
 
     for (;;) {
         swimd_scan_setup_path("c:\\projects\\linux", git_scanner);
@@ -1362,7 +1406,7 @@ static void swimd_scenario_setup_path(void) {
         swimd_scan_process_input_free(&result);
         getchar();
     }
-    swimd_scan_thread_stop(git_scanner);
+    swimd_scan_glob_free(git_scanner);
     swimd_global_free();
 
     printf("Over\n");
@@ -1373,7 +1417,7 @@ static void swimd_scenario_scanning(void) {
     swimd_global_init("swimd.log");
 
     SwimdScanner* git_scanner = &swimd_scanners[SCANNER_GIT];
-    swimd_scan_thread_init(git_scanner);
+    swimd_scan_glob_init(git_scanner);
 
     for (int i = 0; i < 10; i++) {
         swimd_scan_setup_path("c:\\projects\\linux", git_scanner);
@@ -1398,7 +1442,7 @@ static void swimd_scenario_scanning(void) {
             getchar();
         }
     }
-    swimd_scan_thread_stop(git_scanner);
+    swimd_scan_glob_free(git_scanner);
     swimd_global_free();
 
     printf("Over\n");
