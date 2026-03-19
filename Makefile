@@ -6,7 +6,7 @@ INCLUDES = \
 	-I"c:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared" \
 	-I"lualib\include" \
 	-I"libgit2\include"
-CFLAGS = -nologo -MT
+CFLAGS = -nologo -MT -O2
 LFLAGS = -DEBUG
 LIBPATHS = \
 	-LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\lib\x64" \

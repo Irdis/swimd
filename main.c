@@ -1,5 +1,7 @@
+#include "assert.h"
 #include "immintrin.h"
 #include "stdio.h"
+#include "stdarg.h"
 #include "windows.h"
 #include "limits.h"
 #include "stdlib.h"
@@ -14,12 +16,20 @@
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
-#define GAP_PENALTY 3
-#define SUB_PENALTY 2
+#define MATCH_ERROR 0.7
+#define LEN_DIFF_ERROR_COST 0.3
+#define SUB_PENALTY -9
+#define MATCH_REWARD 9
+static int GAP_PENALTY[][2] = {
+    { -12, 1 },
+    { -11, 4 },
+    { -10, -1 }
+};
 #define Vector __m256i
 #define D_IND(i, j) (MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i) + \
             LANES_COUNT_SHORT * (j))
 
+#define ABS(x) ((x) < 0 ? -(x) : (x))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define CEIL_DIV(a,b) ((a) % (b) == 0 ? ((a)/(b)) : ((a)/(b)) + 1)
@@ -213,27 +223,28 @@ static void swimd_log_append(const char *msg, ...) {
     timespec_get(&ts, TIME_UTC);
     time_t seconds = ts.tv_sec;
 
-    struct tm *t = localtime(&seconds);
+    struct tm t;
+    localtime_s(&t, &seconds);
 
 #ifdef DEBUG_PRINT
     printf("%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
-        t->tm_year+1900,
-        t->tm_mon+1,
-        t->tm_mday,
-        t->tm_hour,
-        t->tm_min,
-        t->tm_sec,
+        t.tm_year+1900,
+        t.tm_mon+1,
+        t.tm_mday,
+        t.tm_hour,
+        t.tm_min,
+        t.tm_sec,
         ts.tv_nsec
     );
 #endif
 
     fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
-        t->tm_year+1900,
-        t->tm_mon+1,
-        t->tm_mday,
-        t->tm_hour,
-        t->tm_min,
-        t->tm_sec,
+        t.tm_year+1900,
+        t.tm_mon+1,
+        t.tm_mday,
+        t.tm_hour,
+        t.tm_min,
+        t.tm_sec,
         ts.tv_nsec
     );
     va_list args;
@@ -586,7 +597,7 @@ static void swimd_git_collect_status_paths(git_repository *repo,
     size_t count = git_status_list_entrycount(status_list);
     for (size_t i = 0; i < count; i++) {
         const git_status_entry *entry = git_status_byindex(status_list, i);
-        const char *path = path = entry->index_to_workdir->new_file.path;
+        const char *path = entry->index_to_workdir->new_file.path;
         if ((entry->status & GIT_STATUS_WT_NEW) > 0) {
             int depth = 0;
             cur_folder = swimd_process_path(path,
@@ -651,8 +662,8 @@ static void swimd_list_directories_free(const SwimdFileList *lst,
     }
 }
 
-static void swimd_prep_files_vec(SwimdScanner *state) {
-    SwimdFileList *files = state->files;
+static void swimd_prep_files_vec(SwimdScanner *scanner) {
+    SwimdFileList *files = scanner->files;
     int files_length = files->length;
     int files_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
     SwimdFileVec *files_vec = malloc(files_vec_length * sizeof(SwimdFileVec));
@@ -684,8 +695,8 @@ static void swimd_prep_files_vec(SwimdScanner *state) {
             .length = file_vec_length,
         };
     }
-    state->files_vec = files_vec;
-    state->files_vec_length = files_vec_length;
+    scanner->files_vec = files_vec;
+    scanner->files_vec_length = files_vec_length;
 }
 
 static void swimd_prep_files_vec_free(SwimdScanner *state) {
@@ -727,33 +738,71 @@ static void swimd_setup_needle_free(SwimdScanner *scanner) {
     swimd_prep_needle_vec_free(scanner);
 }
 
-static void swimd_vec_estimate(short *d,
-    short *a,
-    int a_len,
-    short *b,
-    int b_len,
-    int pos,
-    short *scores
+void swimd_vec_estimate_diag(short *d,
+        int ind,
+        char* needle,
+        int needle_length,
+        char* file_name,
+        int file_name_length) {
+    printf("===== swimd_vec_estimate_diag ====\n");
+    printf("%s %d\n", needle, needle_length);
+    printf("%s %d\n", file_name, file_name_length);
+    for (int i = 0; i <= needle_length; i++) {
+        for (int j = 0; j <= file_name_length; j++) {
+            printf("%4d ", d[D_IND(i, j) + ind]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
+
+static void swimd_score_minmax(int needle_len,
+        int word_len,
+        short *gap_distr_sum,
+        int *min_score,
+        int *max_score) {
+    int gap_sum = gap_distr_sum[MAX(needle_len, word_len)] -
+        gap_distr_sum[MIN(needle_len, word_len)];
+
+    int min = SUB_PENALTY * MIN(needle_len, word_len);
+    min += gap_sum;
+    *min_score = min;
+
+    int max = MATCH_REWARD * MIN(needle_len, word_len);
+    max += gap_sum;
+    *max_score = max;
+}
+
+static void swimd_simd_haystack_scores(short *d,
+    short *needle_vec,
+    int needle_vec_length,
+    short *haystack_vec,
+    int haystack_vec_length,
+    int haystack_index,
+    short *scores,
+    short *gap_distr_fun,
+    SwimdFileList *files,
+    char* needle
 ) {
-    int n = a_len / LANES_COUNT_SHORT + 1;
-    int m = b_len / LANES_COUNT_SHORT + 1;
+    int needle_length = needle_vec_length / LANES_COUNT_SHORT;
+    int haystack_max_length = haystack_vec_length / LANES_COUNT_SHORT;
 
-    Vector sub_pen = _mm256_set1_epi16(-SUB_PENALTY);
-    Vector eq_reward = _mm256_set1_epi16(SUB_PENALTY);
-    Vector gap_pen = _mm256_set1_epi16(GAP_PENALTY);
+    Vector sub_pen = _mm256_set1_epi16(SUB_PENALTY);
+    Vector eq_reward = _mm256_set1_epi16(MATCH_REWARD);
 
-    Vector res = _mm256_set1_epi16(SHRT_MIN);
-    for (int i = 1; i < n; i++) {
-        Vector va = _mm256_loadu_si256((Vector const*)&a[LANES_COUNT_SHORT * (i - 1)]);
-        for (int j = 1; j < m; j++) {
-            Vector vb = _mm256_loadu_si256((Vector const*)&b[LANES_COUNT_SHORT * (j - 1)]);
+    for (int i = 1; i <= needle_length; i++) {
+        Vector gap_pen_i = _mm256_set1_epi16(gap_distr_fun[i - 1]);
+        Vector va = _mm256_loadu_si256((Vector const*)&needle_vec[LANES_COUNT_SHORT * (i - 1)]);
+        for (int j = 1; j <= haystack_max_length; j++) {
+            Vector gap_pen_j = _mm256_set1_epi16(gap_distr_fun[j - 1]);
+            Vector vb = _mm256_loadu_si256((Vector const*)&haystack_vec[LANES_COUNT_SHORT * (j - 1)]);
             Vector vdiag = _mm256_loadu_si256((Vector const*)&d[
                     D_IND(i - 1, j - 1)
             ]);
-            Vector vup = _mm256_loadu_si256((Vector const*)&d[
+            Vector vleft = _mm256_loadu_si256((Vector const*)&d[
                     D_IND(i, j - 1)
             ]);
-            Vector vleft = _mm256_loadu_si256((Vector const*)&d[
+            Vector vup = _mm256_loadu_si256((Vector const*)&d[
                     D_IND(i - 1, j)
             ]);
 
@@ -763,32 +812,48 @@ static void swimd_vec_estimate(short *d,
             Vector o1 = _mm256_add_epi16(c1, c2);
             o1 = _mm256_add_epi16(o1, vdiag);
 
-            Vector o2 = _mm256_sub_epi16(vup, gap_pen);
-            Vector o3 = _mm256_sub_epi16(vleft, gap_pen);
+            Vector o2 = _mm256_add_epi16(vup, gap_pen_i);
+            Vector o3 = _mm256_add_epi16(vleft, gap_pen_j);
 
             Vector o = _mm256_max_epi16(o1, o2);
             o = _mm256_max_epi16(o, o3);
             _mm256_storeu_si256((Vector*)&d[
                     D_IND(i, j)
             ], o);
-            res = _mm256_max_epi16(res, o);
         }
     }
-    _mm256_storeu_si256((Vector*)&scores[
-            pos * LANES_COUNT_SHORT
-    ], res);
+    for (int i = 0; i < LANES_COUNT_SHORT; i++) {
+        int file_index = haystack_index * LANES_COUNT_SHORT + i;
+        if (file_index >= files->length)
+            break;
+        char *file_name = files->arr[file_index].name;
+        int file_name_length = files->arr[file_index].name_length;
+        scores[file_index] = d[D_IND(needle_length, file_name_length) + i];
+#ifdef DEBUG_PRINT
+        swimd_vec_estimate_diag(d,
+                i,
+                needle,
+                needle_length,
+                file_name,
+                file_name_length);
+#endif
+    }
 }
+
 
 static void swimd_simd_scores(SwimdScanner *scanner) {
     for (int i = 0; i < scanner->files_vec_length; i++) {
-        swimd_vec_estimate(
+        swimd_simd_haystack_scores(
             scanner->d_vec,
             scanner->needle_vec,
             scanner->needle_vec_length,
             scanner->files_vec[i].arr,
             scanner->files_vec[i].length,
             i,
-            scanner->scores
+            scanner->scores,
+            scanner->gap_distr_fun,
+            scanner->files,
+            scanner->needle
         );
     }
 }
@@ -819,25 +884,25 @@ static void swimd_scores_heap_cut_head(SwimdScoresHeap *scores_heap) {
     int ind = 0;
     while (1) {
         int left_ind = LEFT_HEAP(ind);
+        int right_ind = RIGHT_HEAP(ind);
+        int smallest = ind;
         if (left_ind < scores_heap->size &&
-            scores_heap->arr[ind].score > scores_heap->arr[left_ind].score) {
-            SWAP(scores_heap->arr[ind],
-                    scores_heap->arr[left_ind],
-                    SwimdScoresHeapItem);
-            ind = left_ind;
-            continue;
+            scores_heap->arr[smallest].score > scores_heap->arr[left_ind].score) {
+            smallest = left_ind;
         }
 
-        int right_ind = RIGHT_HEAP(ind);
         if (right_ind < scores_heap->size &&
-            scores_heap->arr[ind].score > scores_heap->arr[right_ind].score) {
-            SWAP(scores_heap->arr[ind],
-                    scores_heap->arr[right_ind],
-                    SwimdScoresHeapItem);
-            ind = right_ind;
-            continue;
+            scores_heap->arr[smallest].score > scores_heap->arr[right_ind].score) {
+            smallest = right_ind;
         }
-        break;
+
+        if (smallest == ind)
+            break;
+
+        SWAP(scores_heap->arr[ind],
+                scores_heap->arr[smallest],
+                SwimdScoresHeapItem);
+        ind = smallest;
     }
 }
 
@@ -880,18 +945,60 @@ static int swimd_compare_heap_item(const void *a, const void *b) {
     return a_item->score > b_item->score ? 1 : -1;
 }
 
-static void swimd_top_scores(int n, SwimdScanner *scanner) {
+static int swimd_top_scores(int n, SwimdScanner *scanner) {
+    int match_count = 0;
     swimd_scores_heap_init(&scanner->scores_heap, n);
     for (int i = 0; i < scanner->files->length; i++) {
+        int min_score, max_score;
+        SwimdFile *file = &scanner->files->arr[i];
+        swimd_score_minmax(scanner->needle_length,
+                file->name_length,
+                scanner->gap_distr_sum,
+                &min_score,
+                &max_score);
+        short score = scanner->scores[i];
+        if (score < min_score || score > max_score) {
+            swimd_log_append("Score outside of the borders needle '%s' file '%s' score %d min %d max %d",
+                    scanner->needle,
+                    file->name,
+                    score,
+                    min_score,
+                    max_score);
+            assert(min_score <= score && score <= max_score);
+        }
+
+        short normalized_score = (short)((score - min_score) / (double)(max_score - min_score) * 100);
+        short len_diff_error = ABS(scanner->needle_length - file->name_length) / 
+            (double)(MAX(scanner->needle_length, file->name_length)) * LEN_DIFF_ERROR_COST * normalized_score;
+        normalized_score -= len_diff_error;
+
+#ifdef DEBUG_PRINT
+        printf("===== scores =====\n");
+        printf("min =          %d\n", min_score);
+        printf("max =          %d\n", max_score);
+        printf("res =          %d\n", score);
+        printf("nrm =          %d\n", normalized_score);
+        printf("len_diff_err = %d\n", len_diff_error);
+        printf("needle = %s\n", scanner->needle);
+        printf("file   = %s\n", file->name);
+        printf("==================\n");
+#endif
+        if (normalized_score < MATCH_ERROR * 100) {
+            continue;
+        }
+
         swimd_scores_heap_insert(&scanner->scores_heap, (SwimdScoresHeapItem){
-                .score = scanner->scores[i],
+                .score = normalized_score,
                 .index = i
         });
+        match_count++;
     }
     qsort(scanner->scores_heap.arr,
             scanner->scores_heap.size,
             sizeof(SwimdScoresHeapItem),
             swimd_compare_heap_item);
+
+    return match_count;
 }
 
 static void swimd_init_root_folder(SwimdFolderStruct *root) {
@@ -950,10 +1057,11 @@ static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) 
 
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
+
     scanner->scanning_func(root_path, files, folders, TRUE);
-    swimd_list_git(root_path, files, folders, TRUE);
 
     EnterCriticalSection(&scanner->scan_state_swap);
+
     swimd_scanner_free(scanner);
 
     scanner->files = files;
@@ -1016,14 +1124,14 @@ static void swimd_d_vec_init(SwimdScanner *scanner) {
     memset(scanner->d_vec, 0, MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
     for (int i = 1; i < MAX_PATH_LENGTH; i++) {
         short value = scanner->d_vec[D_IND(i - 1, 0)];
-        value -= GAP_PENALTY;
+        value += scanner->gap_distr_fun[i - 1];
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
             scanner->d_vec[D_IND(i, 0) + j] = value;
         }
     }
     for (int i = 1; i < MAX_PATH_LENGTH; i++) {
         short value = scanner->d_vec[D_IND(0, i - 1)];
-        value -= GAP_PENALTY;
+        value += scanner->gap_distr_fun[i - 1];
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
             scanner->d_vec[D_IND(0, i) + j] = value;
         }
@@ -1034,25 +1142,40 @@ static void swimd_d_vec_free(SwimdScanner *scanner) {
     free(scanner->d_vec);
 }
 
-static void swimd_gap_distr_fun_linear(short *arr, int n) {
-    for (int i = 0; i < n; i++) {
-        arr[i] = -3 - i;
+static void swimd_gap_distr_fun_custom(short *arr, int n) {
+    int gap_ind = 0;
+    int ind = 0;
+    for (;;) {
+        const int *gap_row = GAP_PENALTY[gap_ind];
+        gap_ind++;
+        if (gap_row[1] == -1) {
+            for (int i = ind; i < n; i++) {
+                arr[i] = gap_row[0];
+            }
+            return;
+        }
+        for (int i = 0; i < gap_row[1]; i++) {
+            if (ind >= n)
+                return;
+            arr[ind] = gap_row[0];
+            ind++;
+        }
     }
 }
 
 static void swimd_gap_distr_fun(short *arr, int n) {
-    swimd_gap_distr_fun_linear(arr, n);
+    swimd_gap_distr_fun_custom(arr, n);
 }
 
 static void swimd_gap_distr_sum(short *sum, short *arr, int n) {
-    sum[0] = arr[0];
+    sum[0] = 0;
     for (int i = 1; i < n; i++) {
-        sum[i] = sum[i - 1] + arr[i];
+        sum[i] = sum[i - 1] + arr[i - 1];
     }
 }
 
 static void swimd_gap_distr_init(SwimdScanner *scanner) {
-    scanner->gap_distr_fun = malloc(MAX_PATH_LENGTH  *sizeof(short));
+    scanner->gap_distr_fun = malloc(MAX_PATH_LENGTH * sizeof(short));
     scanner->gap_distr_sum = malloc(MAX_PATH_LENGTH * sizeof(short));
     swimd_gap_distr_fun(scanner->gap_distr_fun, MAX_PATH_LENGTH);
     swimd_gap_distr_sum(scanner->gap_distr_sum, scanner->gap_distr_fun, MAX_PATH_LENGTH);
@@ -1197,7 +1320,7 @@ static void swimd_process_input(const char *needle,
 
     for (int i = 0; i < result->items_length / 2; i++) {
         SWAP(result->items[i], result->items[result->items_length - i - 1],
-            SwimdProcessInputResultItem);
+                SwimdProcessInputResultItem);
     }
 
     swimd_top_scores_free(scanner);
@@ -1381,14 +1504,14 @@ int luaopen_swimd(lua_State *L) {
 static void swimd_scenario_setup_path(void) {
     swimd_initialized = TRUE;
     swimd_global_init("swimd.log");
-    SwimdScanner *git_scanner = &swimd_scanners[SCANNER_GIT];
-    swimd_scan_glob_init(git_scanner);
+    SwimdScanner *scanner = &swimd_scanners[SCANNER_FILES];
+    swimd_scan_glob_init(scanner);
 
     for (;;) {
-        swimd_scan_setup_path("c:\\projects\\linux", git_scanner);
+        swimd_scan_setup_path("c:\\projects\\tmp_swimd", scanner);
 
         SwimdProcessInputResult result = {0};
-        swimd_scan_process_input("swimd", 10, &result, git_scanner);
+        swimd_scan_process_input("swimd", 10, &result, scanner);
 
         if (result.scan_in_progress) {
             printf("Scanning %d\n", result.scanned_items_count);
@@ -1406,7 +1529,7 @@ static void swimd_scenario_setup_path(void) {
         swimd_scan_process_input_free(&result);
         getchar();
     }
-    swimd_scan_glob_free(git_scanner);
+    swimd_scan_glob_free(scanner);
     swimd_global_free();
 
     printf("Over\n");
@@ -1416,14 +1539,14 @@ static void swimd_scenario_scanning(void) {
     swimd_initialized = TRUE;
     swimd_global_init("swimd.log");
 
-    SwimdScanner *git_scanner = &swimd_scanners[SCANNER_GIT];
+    SwimdScanner *git_scanner = &swimd_scanners[SCANNER_FILES];
     swimd_scan_glob_init(git_scanner);
 
     for (int i = 0; i < 10; i++) {
-        swimd_scan_setup_path("c:\\projects\\linux", git_scanner);
+        swimd_scan_setup_path("c:\\projects\\tmp_swimd", git_scanner);
         while(1) {
             SwimdProcessInputResult result = {0};
-            swimd_scan_process_input("swimd", 10, &result, git_scanner);
+            swimd_scan_process_input("connecti", 10, &result, git_scanner);
 
             if (result.scan_in_progress) {
                 printf("Scanning %d\n", result.scanned_items_count);
