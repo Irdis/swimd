@@ -16,10 +16,11 @@
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
-#define MATCH_ERROR 0.7
+#define MATCH_ERROR 0.5
 #define LEN_DIFF_ERROR_COST 0.3
 #define SUB_PENALTY -9
-#define MATCH_REWARD 9
+#define MATCH_STRICT_REWARD 9
+#define MATCH_CASE_INSENSITIVE_REWARD 5
 static int GAP_PENALTY[][2] = {
     { -12, 1 },
     { -11, 4 },
@@ -768,9 +769,37 @@ static void swimd_score_minmax(int needle_len,
     min += gap_sum;
     *min_score = min;
 
-    int max = MATCH_REWARD * MIN(needle_len, word_len);
+    int max = MATCH_STRICT_REWARD * MIN(needle_len, word_len);
     max += gap_sum;
     *max_score = max;
+}
+
+static inline Vector swimd_simd_filter_az(Vector x) {
+    Vector va = _mm256_set1_epi16('a' - 1);
+    Vector vz = _mm256_set1_epi16('z' + 1);
+    Vector vA = _mm256_set1_epi16('A' - 1);
+    Vector vZ = _mm256_set1_epi16('Z' + 1);
+
+    Vector gea = _mm256_cmpgt_epi16(x, va);
+    Vector lez = _mm256_cmpgt_epi16(vz, x);
+    Vector in_a_z = _mm256_and_si256(gea, lez);
+
+    Vector geA = _mm256_cmpgt_epi16(x, vA);
+    Vector leZ = _mm256_cmpgt_epi16(vZ, x);
+    Vector in_A_Z = _mm256_and_si256(geA, leZ);
+
+    Vector mask = _mm256_or_si256(in_a_z, in_A_Z);
+    return _mm256_and_si256(x, mask);
+}
+
+static inline Vector swimd_simd_az_inverse_case(Vector x) {
+    Vector zero = _mm256_setzero_si256();
+    Vector az = swimd_simd_filter_az(x);
+    Vector mask = _mm256_cmpeq_epi16(az, zero);
+    Vector sign = _mm256_set1_epi16('a' ^ 'A');
+    Vector flipped = _mm256_xor_si256(az, sign);
+    Vector clear = _mm256_andnot_si256(mask, flipped);
+    return clear;
 }
 
 static void swimd_simd_haystack_scores(short *d,
@@ -788,11 +817,13 @@ static void swimd_simd_haystack_scores(short *d,
     int haystack_max_length = haystack_vec_length / LANES_COUNT_SHORT;
 
     Vector sub_pen = _mm256_set1_epi16(SUB_PENALTY);
-    Vector eq_reward = _mm256_set1_epi16(MATCH_REWARD);
+    Vector eq_reward = _mm256_set1_epi16(MATCH_STRICT_REWARD);
+    Vector cis_reward = _mm256_set1_epi16(MATCH_CASE_INSENSITIVE_REWARD);
 
     for (int i = 1; i <= needle_length; i++) {
         Vector gap_pen_i = _mm256_set1_epi16(gap_distr_fun[i - 1]);
         Vector va = _mm256_loadu_si256((Vector const*)&needle_vec[LANES_COUNT_SHORT * (i - 1)]);
+        Vector vca = swimd_simd_az_inverse_case(va);
         for (int j = 1; j <= haystack_max_length; j++) {
             Vector gap_pen_j = _mm256_set1_epi16(gap_distr_fun[j - 1]);
             Vector vb = _mm256_loadu_si256((Vector const*)&haystack_vec[LANES_COUNT_SHORT * (j - 1)]);
@@ -806,10 +837,14 @@ static void swimd_simd_haystack_scores(short *d,
                     D_IND(i - 1, j)
             ]);
 
-            Vector veq = _mm256_cmpeq_epi16(va, vb);
-            Vector c1 = _mm256_and_si256(eq_reward, veq);
-            Vector c2 = _mm256_andnot_si256(veq, sub_pen); // flipped
+            Vector strict_eq = _mm256_cmpeq_epi16(va, vb);
+            Vector caseinsensitive_eq = _mm256_cmpeq_epi16(vca, vb);
+            Vector hit_mask = _mm256_or_si256(strict_eq, caseinsensitive_eq);
+            Vector c1 = _mm256_and_si256(eq_reward, strict_eq);
+            Vector c2 = _mm256_and_si256(cis_reward, caseinsensitive_eq);
+            Vector c3 = _mm256_andnot_si256(hit_mask, sub_pen);
             Vector o1 = _mm256_add_epi16(c1, c2);
+            o1 = _mm256_add_epi16(o1, c3);
             o1 = _mm256_add_epi16(o1, vdiag);
 
             Vector o2 = _mm256_add_epi16(vup, gap_pen_i);
@@ -1574,5 +1609,6 @@ static void swimd_scenario_scanning(void) {
 int main() {
     swimd_scenario_scanning();
     // swimd_scenario_setup_path();
+
     return 0;
 }
