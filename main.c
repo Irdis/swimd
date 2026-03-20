@@ -16,7 +16,7 @@
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
-#define MATCH_ERROR 0.5
+#define ERROR_THRESHOLD 0.2
 #define LEN_DIFF_ERROR_COST 0.3
 #define SUB_PENALTY -9
 #define MATCH_STRICT_REWARD 9
@@ -1021,7 +1021,7 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
         printf("file   = %s\n", file->name);
         printf("==================\n");
 #endif
-        if (normalized_score < MATCH_ERROR * 100) {
+        if (normalized_score < ERROR_THRESHOLD * 100) {
             continue;
         }
 
