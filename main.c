@@ -63,7 +63,7 @@ typedef struct {
 typedef struct SwimdFolderStruct SwimdFolderStruct;
 
 typedef struct {
-    SwimdFolderStruct* *arr;
+    SwimdFolderStruct **arr;
     int length;
     int capacity;
 } SwimdFolderStructList;
@@ -598,6 +598,9 @@ static void swimd_git_collect_status_paths(git_repository *repo,
     size_t count = git_status_list_entrycount(status_list);
     for (size_t i = 0; i < count; i++) {
         const git_status_entry *entry = git_status_byindex(status_list, i);
+        if (entry->index_to_workdir == NULL) {
+            continue;
+        }
         const char *path = entry->index_to_workdir->new_file.path;
         if ((entry->status & GIT_STATUS_WT_NEW) > 0) {
             int depth = 0;
@@ -1581,7 +1584,7 @@ static void swimd_scenario_scanning(void) {
         swimd_scan_setup_path("c:\\projects\\tmp_swimd", git_scanner);
         while(1) {
             SwimdProcessInputResult result = {0};
-            swimd_scan_process_input("connecti", 10, &result, git_scanner);
+            swimd_scan_process_input("fil", 10, &result, git_scanner);
 
             if (result.scan_in_progress) {
                 printf("Scanning %d\n", result.scanned_items_count);
