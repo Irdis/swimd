@@ -1006,7 +1006,7 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
         }
 
         short normalized_score = (short)((score - min_score) / (double)(max_score - min_score) * 100);
-        short len_diff_error = ABS(scanner->needle_length - file->name_length) / 
+        short len_diff_error = ABS(scanner->needle_length - file->name_length) /
             (double)(MAX(scanner->needle_length, file->name_length)) * LEN_DIFF_ERROR_COST * normalized_score;
         normalized_score -= len_diff_error;
 
@@ -1403,7 +1403,8 @@ static int swimd_lua_init(lua_State *L) {
     }
     swimd_initialized = TRUE;
 
-    const char *log_path = lua_isnil(L, 1) ? NULL : luaL_checkstring(L, 1);
+    const char *log_path = lua_gettop(L) == 0 || lua_isnil(L, 1)
+        ? NULL : luaL_checkstring(L, 1);
 
     swimd_global_init(log_path);
 
