@@ -1,12 +1,12 @@
-CC = cl
-	
 all: main
 
-nob.exe:
-	$(CC) nob.c
+build/nob:
+	gcc -o build/nob nob.c
 
-main: nob.exe
-	nob.exe
+main: build/nob
+	./build/nob
 
 clean:
-	del *.exe *.exp *.lib *.obj *.dll *.pdb *.idb *.ilk
+	rmrf -p build/ 
+	mkdir build/
+	touch build/.gitkeep
