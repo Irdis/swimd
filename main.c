@@ -1,14 +1,27 @@
+#ifdef _WIN32
+#   include <windows.h>
+#else
+#   include <pthread.h>  
+#endif
+#include <stdbool.h>
+#include <string.h>
+
 #include "assert.h"
 #include "immintrin.h"
 #include "stdio.h"
 #include "stdarg.h"
-#include "windows.h"
 #include "limits.h"
 #include "stdlib.h"
 #include "lua.h"
 #include "lauxlib.h"
 #include "time.h"
 #include "git2.h"
+
+#ifdef _WIN32
+    #define EXPORT __declspec(dllexport)
+#else
+    #define EXPORT __attribute__((visibility("default")))
+#endif
 
 #define SCANNER_GIT   0
 #define SCANNER_FILES 1
@@ -47,6 +60,174 @@ static int GAP_PENALTY[][2] = {
         b = temp;        \
     } while (0)
 
+#ifdef _WIN32
+typedef DWORD (*swimd_thread_callback)(LPVOID);
+
+static void swimd_thread_create(HANDLE *t, swimd_thread_callback callback) {
+    *t = CreateThread(NULL, 0, callback, NULL, 0, NULL);
+}
+
+static void swimd_thread_join(HANDLE *t) {
+    WaitForSingleObject(*t, INFINITE);
+}
+
+static void swimd_thread_close(HANDLE *t) {
+    CloseHandle(*t);
+}
+
+static void swimd_crit_init(CRITICAL_SECTION *lock) {
+    InitializeCriticalSection(*lock);
+}
+
+static void swimd_crit_lock(CRITICAL_SECTION *lock) {
+    EnterCriticalSection(*lock);
+}
+
+static void swimd_crit_unlock(CRITICAL_SECTION *lock) {
+    LeaveCriticalSection(*lock);
+}
+
+static void swimd_crit_close(CRITICAL_SECTION *lock) {
+    DeleteCriticalSection(*lock);
+}
+
+static void swimd_are_init(HANDLE *ev, bool initial_state) {
+    *ev = CreateEvent(NULL, false, initial_state, NULL);
+}
+
+static void swimd_are_wait(HANDLE *ev) {
+    WaitForSingleObject(*ev, INFINITE);
+}
+
+static void swimd_are_set(HANDLE *ev) {
+    SetEvent(*ev, INFINITE);
+}
+
+static void swimd_are_close(HANDLE *ev) {
+    CloseHandle(*ev);
+}
+
+static void swimd_mre_init(HANDLE *ev, bool initial_state) {
+    *ev = CreateEvent(NULL, true, initial_state, NULL);
+}
+
+static void swimd_mre_wait(HANDLE *ev) {
+    WaitForSingleObject(*ev, INFINITE);
+}
+
+static void swimd_mre_set(HANDLE *ev) {
+    SetEvent(*ev, INFINITE);
+}
+
+static void swimd_mre_reset(HANDLE *ev) {
+    ResetEvent(*ev);
+}
+
+static void swimd_mre_close(HANDLE *ev) {
+    CloseHandle(*ev);
+}
+#else
+typedef void* (*swimd_thread_callback)(void*);
+
+static void swimd_thread_create(pthread_t *t, swimd_thread_callback callback) {
+    pthread_create(t, NULL, callback, NULL);
+}
+
+static void swimd_thread_join(pthread_t *t) {
+   pthread_join(*t, NULL);
+}
+
+static void swimd_thread_close(pthread_t *t) {
+}
+
+static void swimd_crit_init(pthread_mutex_t *lock) {
+    pthread_mutex_init(lock, NULL);
+}
+
+static void swimd_crit_lock(pthread_mutex_t *lock) {
+    pthread_mutex_lock(lock);
+}
+
+static void swimd_crit_unlock(pthread_mutex_t *lock) {
+    pthread_mutex_unlock(lock);
+}
+
+static void swimd_crit_close(pthread_mutex_t *lock) {
+    pthread_mutex_destroy(lock);
+}
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    bool signaled;
+} SwimdAutoResetEvent;
+
+static void swimd_are_init(SwimdAutoResetEvent *ev, bool initial_state) {
+    pthread_mutex_init(&ev->mutex, NULL);
+    pthread_cond_init(&ev->condition, NULL);
+    ev->signaled = initial_state;
+}
+
+static void swimd_are_wait(SwimdAutoResetEvent *ev) {
+    pthread_mutex_lock(&ev->mutex);
+    while (!ev->signaled) {
+        pthread_cond_wait(&ev->condition, &ev->mutex);
+    }
+    ev->signaled = false;
+    pthread_mutex_unlock(&ev->mutex);
+}
+
+static void swimd_are_set(SwimdAutoResetEvent *ev) {
+    pthread_mutex_lock(&ev->mutex);
+    ev->signaled = true;
+    pthread_mutex_unlock(&ev->mutex);
+    pthread_cond_signal(&ev->condition);
+}
+
+static void swimd_are_close(SwimdAutoResetEvent *ev) {
+    pthread_mutex_destroy(&ev->mutex);
+    pthread_cond_destroy(&ev->condition);
+}
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    bool signaled;
+} SwimdManualResetEvent;
+
+static void swimd_mre_init(SwimdManualResetEvent *ev, bool initial_state) {
+    pthread_mutex_init(&ev->mutex, NULL);
+    pthread_cond_init(&ev->condition, NULL);
+    ev->signaled = initial_state;
+}
+
+static void swimd_mre_wait(SwimdManualResetEvent *ev) {
+    pthread_mutex_lock(&ev->mutex);
+    while (!ev->signaled) {
+        pthread_cond_wait(&ev->condition, &ev->mutex);
+    }
+    pthread_mutex_unlock(&ev->mutex);
+}
+
+static void swimd_mre_set(SwimdManualResetEvent *ev) {
+    pthread_mutex_lock(&ev->mutex);
+    ev->signaled = true;
+    pthread_cond_broadcast(&ev->condition);
+    pthread_mutex_unlock(&ev->mutex);
+}
+
+static void swimd_mre_reset(SwimdManualResetEvent *ev) {
+    pthread_mutex_lock(&ev->mutex);
+    ev->signaled = false;
+    pthread_mutex_unlock(&ev->mutex);
+}
+
+static void swimd_mre_close(SwimdManualResetEvent *ev) {
+    pthread_mutex_destroy(&ev->mutex);
+    pthread_cond_destroy(&ev->condition);
+}
+#endif
+
 typedef struct  {
     char *path;
     char *name;
@@ -54,7 +235,7 @@ typedef struct  {
 } SwimdProcessInputResultItem;
 
 typedef struct {
-    BOOL scan_in_progress;
+    bool scan_in_progress;
     int scanned_items_count;
     SwimdProcessInputResultItem *items;
     int items_length;
@@ -107,12 +288,10 @@ typedef struct  {
 typedef void (*swimd_scanning_func)(const char*,
         SwimdFileList*,
         SwimdFolderStruct*,
-        BOOL);
-
-typedef DWORD (*swimd_scanning_loop)(LPVOID);
+        bool);
 
 typedef struct {
-    BOOL initialized;
+    bool initialized;
 
     char *needle;
     int needle_length;
@@ -132,39 +311,52 @@ typedef struct {
     short *gap_distr_fun;
     short *gap_distr_sum;
 
+#ifdef _WIN32
     HANDLE scan_thread;
     HANDLE scan_begin;
     HANDLE scan_started;
     HANDLE scan_finished;
     CRITICAL_SECTION scan_state_swap;
-    volatile BOOL scan_terminate;
-    volatile BOOL scan_cancelled;
-    volatile BOOL scan_in_progress;
-    volatile BOOL scan_is_refreshing;
+#else
+    pthread_t scan_thread;
+    SwimdAutoResetEvent scan_begin;
+    SwimdAutoResetEvent scan_started;
+    SwimdManualResetEvent scan_finished;
+    pthread_mutex_t scan_state_swap;
+#endif
+    volatile bool scan_terminate;
+    volatile bool scan_cancelled;
+    volatile bool scan_in_progress;
+    volatile bool scan_is_refreshing;
     char *scan_path;
     int scan_files_count;
     int scan_files_refresh_count;
 
     swimd_scanning_func scanning_func;
-    swimd_scanning_loop scanning_loop;
+    swimd_thread_callback scanning_loop;
 } SwimdScanner;
 
 static void swimd_list_files(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        BOOL refreshing);
+        bool refreshing);
 static void swimd_list_git(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        BOOL refreshing);
+        bool refreshing);
 
+#ifdef _WIN32
 static DWORD WINAPI swimd_scanning_loop_git(LPVOID lp_param);
 static DWORD WINAPI swimd_scanning_loop_files(LPVOID lp_param);
+#else
+static void* swimd_scanning_loop_git(void* lp_param);
+static void* swimd_scanning_loop_files(void* lp_param);
+#endif
 
-static BOOL swimd_initialized = FALSE;
+static bool swimd_initialized = false;
 static SwimdScanner swimd_scanners[SCANNER_COUNT] = {0};
 static FILE *swimd_log = {0};
-static BOOL swimd_log_enabled = FALSE;
+static bool swimd_log_enabled = false;
 
 static void swimd_git2_init(void) {
     git_libgit2_init();
@@ -174,7 +366,7 @@ static void swimd_log_init(const char *log_path) {
     if (log_path == NULL) {
         return;
     }
-    swimd_log_enabled = TRUE;
+    swimd_log_enabled = true;
     swimd_log = fopen(log_path, "a");
     if (swimd_log == NULL) {
         fprintf(stderr, "Unable to init log file");
@@ -203,7 +395,7 @@ static void swimd_log_free(void) {
     if (!swimd_log_enabled) {
         return;
     }
-    swimd_log_enabled = FALSE;
+    swimd_log_enabled = false;
     fclose(swimd_log);
 }
 
@@ -225,7 +417,11 @@ static void swimd_log_append(const char *msg, ...) {
     time_t seconds = ts.tv_sec;
 
     struct tm t;
+#ifdef _WIN32
     localtime_s(&t, &seconds);
+#else
+    localtime_r(&seconds, &t);
+#endif
 
 #ifdef DEBUG_PRINT
     printf("%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
@@ -310,10 +506,11 @@ static void swimd_file_list_free(SwimdFileList *lst) {
     free(lst->arr);
 }
 
-static void swimd_list_files(const char *root_dir,
+#ifdef _WIN32
+static void swimd_list_files_win32(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        BOOL refreshing) {
+        bool refreshing) {
     SwimdScanner *scanner = &swimd_scanners[SCANNER_FILES];
     char root_mask[MAX_PATH_LENGTH];
     char inner_folder[MAX_PATH_LENGTH];
@@ -354,7 +551,7 @@ static void swimd_list_files(const char *root_dir,
                 strcat(inner_folder, "\\");
                 strcat(inner_folder, current_file);
 
-                swimd_list_files(inner_folder, file_list, folder_node, refreshing);
+                swimd_list_files_wi(inner_folder, file_list, folder_node, refreshing);
             }
         } else {
             char *file_name = malloc((current_file_len + 1) * sizeof(char));
@@ -390,6 +587,32 @@ static void swimd_list_files(const char *root_dir,
 
     FindClose(h_find);
 }
+#else 
+static void swimd_list_files_linux(const char *root_dir,
+        SwimdFileList *file_list,
+        SwimdFolderStruct *root_folder,
+        bool refreshing) {
+    // TODO: todo
+}
+#endif
+
+static void swimd_list_files(const char *root_dir,
+        SwimdFileList *file_list,
+        SwimdFolderStruct *root_folder,
+        bool refreshing) {
+#ifdef _WIN32
+    swimd_list_files_win32(root_dir,
+        file_list,
+        root_folder,
+        refreshing);
+#else
+    swimd_list_files_linux(root_dir,
+        file_list,
+        root_folder,
+        refreshing);
+#endif
+}
+
 
 static void swimd_log_git2_error(const char *message, int error) {
     const char *lg2msg = "";
@@ -461,7 +684,7 @@ static SwimdFolderStruct* swimd_process_path(const char *path,
         const char *cur_path,
         int cur_depth,
         int *res_depth,
-        BOOL refreshing) {
+        bool refreshing) {
     SwimdScanner *scanner = &swimd_scanners[SCANNER_GIT];
     int match_depth = swimd_path_match_depth(path, cur_path);
     int up_count = cur_depth - match_depth;
@@ -532,7 +755,7 @@ static SwimdFolderStruct* swimd_process_path(const char *path,
 static void swimd_git_collect_index_paths(git_repository *repo,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        BOOL refreshing) {
+        bool refreshing) {
     SwimdScanner *scanner = &swimd_scanners[SCANNER_GIT];
     if (scanner->scan_cancelled)
         return;
@@ -575,7 +798,7 @@ cleanup:
 static void swimd_git_collect_status_paths(git_repository *repo,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        BOOL refreshing) {
+        bool refreshing) {
     SwimdScanner *scanner = &swimd_scanners[SCANNER_GIT];
     if (scanner->scan_cancelled)
         return;
@@ -624,8 +847,8 @@ cleanup:
 static void swimd_list_git(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        BOOL refreshing) {
-
+        bool refreshing) {
+    printf("scanning git\n");
     git_repository *repo = NULL;
 
     int repo_result = git_repository_open_ext(&repo, root_dir, 0, NULL);
@@ -867,14 +1090,14 @@ static void swimd_simd_haystack_scores(short *d,
         char *file_name = files->arr[file_index].name;
         int file_name_length = files->arr[file_index].name_length;
         scores[file_index] = d[D_IND(needle_length, file_name_length) + i];
-#ifdef DEBUG_PRINT
-        swimd_vec_estimate_diag(d,
-                i,
-                needle,
-                needle_length,
-                file_name,
-                file_name_length);
-#endif
+// #ifdef DEBUG_PRINT
+//         swimd_vec_estimate_diag(d,
+//                 i,
+//                 needle,
+//                 needle_length,
+//                 file_name,
+//                 file_name_length);
+// #endif
     }
 }
 
@@ -1010,17 +1233,17 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
             (double)(MAX(scanner->needle_length, file->name_length)) * LEN_DIFF_ERROR_COST * normalized_score;
         normalized_score -= len_diff_error;
 
-#ifdef DEBUG_PRINT
-        printf("===== scores =====\n");
-        printf("min =          %d\n", min_score);
-        printf("max =          %d\n", max_score);
-        printf("res =          %d\n", score);
-        printf("nrm =          %d\n", normalized_score);
-        printf("len_diff_err = %d\n", len_diff_error);
-        printf("needle = %s\n", scanner->needle);
-        printf("file   = %s\n", file->name);
-        printf("==================\n");
-#endif
+// #ifdef DEBUG_PRINT
+//         printf("===== scores =====\n");
+//         printf("min =          %d\n", min_score);
+//         printf("max =          %d\n", max_score);
+//         printf("res =          %d\n", score);
+//         printf("nrm =          %d\n", normalized_score);
+//         printf("len_diff_err = %d\n", len_diff_error);
+//         printf("needle = %s\n", scanner->needle);
+//         printf("file   = %s\n", file->name);
+//         printf("==================\n");
+// #endif
         if (normalized_score < ERROR_THRESHOLD * 100) {
             continue;
         }
@@ -1071,9 +1294,9 @@ static void swimd_scanner_init(const char *root_path, SwimdScanner *scanner) {
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
 
-    scanner->scanning_func(root_path, files, folders, FALSE);
+    scanner->scanning_func(root_path, files, folders, false);
 
-    EnterCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_lock(&scanner->scan_state_swap);
 
     scanner->files = files;
     scanner->folders = folders;
@@ -1081,7 +1304,7 @@ static void swimd_scanner_init(const char *root_path, SwimdScanner *scanner) {
     swimd_prep_files_vec(scanner);
     swimd_scores_init(scanner);
 
-    LeaveCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_unlock(&scanner->scan_state_swap);
 
     swimd_log_append("Scanning path completed");
 }
@@ -1096,9 +1319,9 @@ static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) 
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
 
-    scanner->scanning_func(root_path, files, folders, TRUE);
+    scanner->scanning_func(root_path, files, folders, true);
 
-    EnterCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_lock(&scanner->scan_state_swap);
 
     swimd_scanner_free(scanner);
 
@@ -1109,52 +1332,67 @@ static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) 
     swimd_prep_files_vec(scanner);
     swimd_scores_init(scanner);
 
-    LeaveCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_unlock(&scanner->scan_state_swap);
 
     swimd_log_append("Refreshing path completed");
 }
 
-static DWORD WINAPI swimd_scanning_loop_impl(LPVOID lp_param, SwimdScanner *scanner) {
+static void swimd_scanning_loop_impl(SwimdScanner *scanner) {
     swimd_log_append("Scanning loop start");
     while (1) {
-        WaitForSingleObject(scanner->scan_begin, INFINITE);
+        swimd_are_wait(&scanner->scan_begin);
 
         if (scanner->scan_terminate)
             break;
 
-        SetEvent(scanner->scan_started);
+        swimd_are_set(&scanner->scan_started);
 
-        ResetEvent(scanner->scan_finished);
+        swimd_mre_reset(&scanner->scan_finished);
 
         if (!scanner->scan_is_refreshing) {
             swimd_scanner_init(scanner->scan_path, scanner);
         } else {
             swimd_scanner_refresh(scanner->scan_path, scanner);
         }
-        scanner->scan_in_progress = FALSE;
-        scanner->scan_is_refreshing = FALSE;
+        scanner->scan_in_progress = false;
+        scanner->scan_is_refreshing = false;
 
-        SetEvent(scanner->scan_finished);
+        swimd_mre_set(&scanner->scan_finished);
     }
     swimd_log_append("Scanning loop exit");
+}
+
+#ifdef _WIN32
+static DWORD WINAPI swimd_scanning_loop_git(LPVOID lp_param) {
+    swimd_scanning_loop_impl(&swimd_scanners[SCANNER_GIT]);
     return 0;
 }
 
-static DWORD WINAPI swimd_scanning_loop_git(LPVOID lp_param) {
-    return swimd_scanning_loop_impl(lp_param, &swimd_scanners[SCANNER_GIT]);
+static DWORD WINAPI swimd_scanning_loop_files(LPVOID lp_param) {
+    swimd_scanning_loop_impl(&swimd_scanners[SCANNER_FILES]);
+    return 0;
+}
+#else
+static void* swimd_scanning_loop_git(void *lp_param) {
+    printf("swimd_scanning_loop_git\n");
+    swimd_scanning_loop_impl(&swimd_scanners[SCANNER_GIT]);
+    return NULL;
 }
 
-static DWORD WINAPI swimd_scanning_loop_files(LPVOID lp_param) {
-    return swimd_scanning_loop_impl(lp_param, &swimd_scanners[SCANNER_FILES]);
+static void* swimd_scanning_loop_files(void *lp_param) {
+    swimd_scanning_loop_impl(&swimd_scanners[SCANNER_FILES]);
+    return NULL;
 }
+#endif
 
 static void swimd_scan_thread_init(SwimdScanner *scanner) {
-    scanner->scan_thread = CreateThread(NULL, 0, scanner->scanning_loop, NULL, 0, NULL);
-    scanner->scan_begin = CreateEvent(NULL, FALSE, FALSE, NULL);
-    scanner->scan_started = CreateEvent(NULL, FALSE, FALSE, NULL);
-    scanner->scan_finished = CreateEvent(NULL, TRUE, TRUE, NULL);
+    swimd_are_init(&scanner->scan_begin, false);
+    swimd_are_init(&scanner->scan_started, false);
+    swimd_mre_init(&scanner->scan_finished, true);
 
-    InitializeCriticalSection(&scanner->scan_state_swap);
+    swimd_thread_create(&scanner->scan_thread, scanner->scanning_loop);
+
+    swimd_crit_init(&scanner->scan_state_swap);
 }
 
 static void swimd_d_vec_init(SwimdScanner *scanner) {
@@ -1235,14 +1473,14 @@ static void swimd_scan_path_free(SwimdScanner *scanner) {
 }
 
 static void swimd_scan_thread_stop(SwimdScanner *scanner) {
-    scanner->scan_cancelled = TRUE;
-    WaitForSingleObject(scanner->scan_finished, INFINITE);
-    scanner->scan_cancelled = FALSE;
+    scanner->scan_cancelled = true;
+    swimd_mre_wait(&scanner->scan_finished);
+    scanner->scan_cancelled = false;
 
-    scanner->scan_terminate = TRUE;
-    SetEvent(scanner->scan_begin);
-    WaitForSingleObject(scanner->scan_thread, INFINITE);
-    scanner->scan_terminate = FALSE;
+    scanner->scan_terminate = true;
+    swimd_are_set(&scanner->scan_begin);
+    swimd_thread_join(&scanner->scan_thread);
+    scanner->scan_terminate = false;
 
     if (scanner->scan_path != NULL) {
         swimd_scan_path_free(scanner);
@@ -1250,12 +1488,12 @@ static void swimd_scan_thread_stop(SwimdScanner *scanner) {
         scanner->scan_path = NULL;
     }
 
-    CloseHandle(scanner->scan_begin);
-    CloseHandle(scanner->scan_started);
-    CloseHandle(scanner->scan_finished);
-    CloseHandle(scanner->scan_thread);
+    swimd_are_close(&scanner->scan_begin);
+    swimd_are_close(&scanner->scan_started);
+    swimd_mre_close(&scanner->scan_finished);
+    swimd_thread_close(&scanner->scan_thread);
 
-    DeleteCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_close(&scanner->scan_state_swap);
 }
 
 static void swimd_scan_glob_free(SwimdScanner *scanner) {
@@ -1265,9 +1503,9 @@ static void swimd_scan_glob_free(SwimdScanner *scanner) {
 }
 
 static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) {
-    scanner->scan_cancelled = TRUE;
-    WaitForSingleObject(scanner->scan_finished, INFINITE);
-    scanner->scan_cancelled = FALSE;
+    scanner->scan_cancelled = true;
+    swimd_mre_wait(&scanner->scan_finished);
+    scanner->scan_cancelled = false;
 
     if (scanner->scan_path != NULL) {
         swimd_scan_path_free(scanner);
@@ -1279,24 +1517,24 @@ static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) 
     scanner->scan_path = malloc((scan_path_len + 1) * sizeof(char));
     strcpy(scanner->scan_path, scan_path);
 
-    scanner->scan_in_progress = TRUE;
+    scanner->scan_in_progress = true;
     scanner->scan_files_count = 0;
     scanner->scan_files_refresh_count = 0;
-    SetEvent(scanner->scan_begin);
+    swimd_are_set(&scanner->scan_begin);
     // need to wait until we start scanning, in order not to messup in cleanup when state has been not initialized
-    WaitForSingleObject(scanner->scan_started, INFINITE);
+    swimd_are_wait(&scanner->scan_started);
 }
 
 static void swimd_scan_refresh_path(SwimdScanner *scanner) {
     if (scanner->scan_in_progress)
         return;
 
-    scanner->scan_in_progress = TRUE;
-    scanner->scan_is_refreshing = TRUE;
+    scanner->scan_in_progress = true;
+    scanner->scan_is_refreshing = true;
     scanner->scan_files_refresh_count = 0;
-    SetEvent(scanner->scan_begin);
+    swimd_are_set(&scanner->scan_begin);
     // same
-    WaitForSingleObject(scanner->scan_started, INFINITE);
+    swimd_are_wait(&scanner->scan_started);
 }
 
 static void swimd_str_reverse(char *buf, int buf_length) {
@@ -1370,18 +1608,18 @@ static void swimd_scan_process_input(const char *input,
         SwimdProcessInputResult *result,
         SwimdScanner *scanner) {
 
-    EnterCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_lock(&scanner->scan_state_swap);
 
     result->scanned_items_count = scanner->scan_files_count;
 
     if (scanner->scan_in_progress && !scanner->scan_is_refreshing) {
-        result->scan_in_progress = TRUE;
+        result->scan_in_progress = true;
     } else {
-        result->scan_in_progress = FALSE;
+        result->scan_in_progress = false;
         swimd_process_input(input, max_size, result, scanner);
     }
 
-    LeaveCriticalSection(&scanner->scan_state_swap);
+    swimd_crit_unlock(&scanner->scan_state_swap);
 }
 
 static void swimd_scan_process_input_free(SwimdProcessInputResult *result) {
@@ -1401,7 +1639,7 @@ static int swimd_lua_init(lua_State *L) {
         swimd_log_append("Already initialized");
         return 0;
     }
-    swimd_initialized = TRUE;
+    swimd_initialized = true;
 
     const char *log_path = lua_gettop(L) == 0 || lua_isnil(L, 1)
         ? NULL : luaL_checkstring(L, 1);
@@ -1432,7 +1670,7 @@ static int swimd_lua_shutdown(lua_State *L) {
 
     swimd_global_free();
 
-    swimd_initialized = FALSE;
+    swimd_initialized = false;
     return 0;
 }
 
@@ -1523,7 +1761,7 @@ static int swimd_lua_log(lua_State *L) {
     return 1;
 }
 
-__declspec(dllexport)
+EXPORT
 int luaopen_swimd(lua_State *L) {
     static const luaL_Reg funcs[] = {
         {"init", swimd_lua_init},
@@ -1541,7 +1779,7 @@ int luaopen_swimd(lua_State *L) {
 }
 
 static void swimd_scenario_setup_path(void) {
-    swimd_initialized = TRUE;
+    swimd_initialized = true;
     swimd_global_init("swimd.log");
     SwimdScanner *scanner = &swimd_scanners[SCANNER_FILES];
     swimd_scan_glob_init(scanner);
@@ -1575,14 +1813,18 @@ static void swimd_scenario_setup_path(void) {
 }
 
 static void swimd_scenario_scanning(void) {
-    swimd_initialized = TRUE;
+    swimd_initialized = true;
     swimd_global_init("swimd.log");
 
-    SwimdScanner *git_scanner = &swimd_scanners[SCANNER_FILES];
+    SwimdScanner *git_scanner = &swimd_scanners[SCANNER_GIT];
     swimd_scan_glob_init(git_scanner);
 
     for (int i = 0; i < 10; i++) {
+#ifdef _WIN32
         swimd_scan_setup_path("c:\\projects\\tmp_swimd", git_scanner);
+#else
+        swimd_scan_setup_path("/home/ivan/Projects/linux", git_scanner);
+#endif
         while(1) {
             SwimdProcessInputResult result = {0};
             swimd_scan_process_input("fil", 10, &result, git_scanner);
