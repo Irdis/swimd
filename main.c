@@ -1,7 +1,7 @@
 #ifdef _WIN32
-#   include <windows.h>
+    #include <windows.h>
 #else
-#   include <pthread.h>  
+    #include <pthread.h>  
 #endif
 #include <stdbool.h>
 #include <string.h>
@@ -1775,6 +1775,13 @@ int luaopen_swimd(lua_State *L) {
         {NULL, NULL}
     };
     luaL_register(L, "swimd", funcs);
+
+    lua_pushinteger(L, SCANNER_FILES);
+    lua_setfield(L, -2, "SCANNER_FILES");
+
+    lua_pushinteger(L, SCANNER_GIT);
+    lua_setfield(L, -2, "SCANNER_GIT");
+
     return 1;
 }
 
