@@ -603,7 +603,6 @@ static void swimd_list_files_linux(const char *root_dir,
     char inner_folder[MAX_PATH_LENGTH];
     struct dirent *entry;
     DIR *dp = opendir(root_dir);
-    swimd_log_append("open dir %s", root_dir);
     if (dp == NULL) {
         swimd_log_append("Unable to opendir %s", root_dir);
         return;
