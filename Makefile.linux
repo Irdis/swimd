@@ -1,0 +1,13 @@
+all: main
+
+build/nob:
+	gcc -o build/nob nob.c
+
+main: build/nob
+	./build/nob
+
+clean:
+	rm -rf build/ 
+	rm -f *.log
+	mkdir build/
+	touch build/.gitkeep

@@ -57,7 +57,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, "-link");
     nob_cmd_append(&cmd, MSVC_LINKS);
 
-    nob_cmd_append(&cmd, "-out:swimd.dll");
+    nob_cmd_append(&cmd, "-out:build\\swimd.dll");
     nob_cmd_append(&cmd, MSVC_LFLAGS);
 
     if (!nob_cmd_run(&cmd)) return 1;
@@ -70,7 +70,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, "-link");
     nob_cmd_append(&cmd, MSVC_LINKS);
 
-    nob_cmd_append(&cmd, "-out:swimd.exe");
+    nob_cmd_append(&cmd, "-out:build\\swimd.exe");
     nob_cmd_append(&cmd, MSVC_LFLAGS);
 
     if (!nob_cmd_run(&cmd)) return 1;
