@@ -2,6 +2,7 @@
     #include <windows.h>
 #else
     #include <pthread.h>  
+    #include <dirent.h>  
 #endif
 #include <stdbool.h>
 #include <string.h>
@@ -598,7 +599,62 @@ static void swimd_list_files_linux(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
         bool refreshing) {
-    // TODO: todo
+    SwimdScanner *scanner = &swimd_scanners[SCANNER_FILES];
+    char inner_folder[MAX_PATH_LENGTH];
+    struct dirent *entry;
+    DIR *dp = opendir(root_dir);
+    swimd_log_append("open dir %s", root_dir);
+    if (dp == NULL) {
+        swimd_log_append("Unable to opendir %s", root_dir);
+        return;
+    }
+
+    while ((entry = readdir(dp))) {
+        const char *current_file = entry->d_name;
+        int current_file_len = strlen(current_file);
+        if (entry->d_type == DT_DIR) {
+            if (strcmp(current_file, ".") != 0 && strcmp(current_file, "..") != 0) {
+                char *folder_name = malloc((current_file_len + 1) * sizeof(char));
+                strcpy(folder_name, current_file);
+                folder_name[current_file_len] = '\0';
+
+                SwimdFolderStruct *folder_node = malloc(sizeof(SwimdFolderStruct));
+                folder_node->name = folder_name;
+                folder_node->name_length = current_file_len;
+                folder_node->parent = root_folder;
+
+                swimd_folders_init(&folder_node->folder_lst);
+                swimd_folders_append(&root_folder->folder_lst, folder_node);
+
+                strcpy(inner_folder, root_dir);
+                strcat(inner_folder, "/");
+                strcat(inner_folder, current_file);
+
+                swimd_list_files_linux(inner_folder, file_list, folder_node, refreshing);
+            }
+        } else if (entry->d_type == DT_REG) {
+            char *file_name = malloc((current_file_len + 1) * sizeof(char));
+            strcpy(file_name, current_file);
+            file_name[current_file_len] = '\0';
+
+            SwimdFile file_node = {
+                .name = file_name,
+                .name_length = current_file_len,
+                .folder = root_folder
+            };
+
+            swimd_file_list_append(file_list, file_node);
+            if (!refreshing)
+                scanner->scan_files_count++;
+            else
+                scanner->scan_files_refresh_count++;
+        }
+
+        if (scanner->scan_cancelled)
+            break;
+    }
+
+    closedir(dp);
 }
 #endif
 

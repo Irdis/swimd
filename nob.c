@@ -10,7 +10,7 @@
     "-LIBPATH:\"lualib\"", "lua51.lib", \
     "-LIBPATH:\"libgit2\"", "git2.lib"
 
-#define CC_CFLAGS "-mavx2"
+#define CC_CFLAGS "-mavx2", "-O2"
 #define CC_INCLUDES \
     "-I/usr/include/lua5.1", \
     "-Ilibgit2/include"
