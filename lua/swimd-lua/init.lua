@@ -1,8 +1,5 @@
 local M = {}
 
-local SCANNER_GIT = 0
-local SCANNER_FILES = 1
-
 M.setup = function()
     M.load_libs();
 
@@ -31,13 +28,23 @@ end
 
 M.lib_path = function ()
     local plugin_dir = M.plugin_root()
-    local result = plugin_dir .. '/../../?.dll'
+    local result = plugin_dir .. '/../../build/'
+    if M.is_linux then
+        result = result .. '?.so'
+    else
+        result = result .. '?.dll'
+    end
     return result
 end
 
 M.dependent_libs = function ()
     local plugin_dir = M.plugin_root()
-    local result = plugin_dir .. '/../../git2.dll'
+    local result = plugin_dir .. '/../../build/'
+    if M.is_linux then
+        result = result .. 'libgit2.so'
+    else
+        result = result .. 'git2.dll'
+    end
     return { result }
 end
 
@@ -48,13 +55,20 @@ M.plugin_root = function ()
 end
 
 M.open_picker_git = function ()
-    local snack = M.configure_snacks(SCANNER_GIT, "git")
+    local swimd = require("swimd")
+    local snack = M.configure_snacks(swimd.SCANNER_GIT, "git")
     Snacks.picker(snack)
 end
 
 M.open_picker_files = function ()
-    local snack = M.configure_snacks(SCANNER_FILES, "files")
+    local swimd = require("swimd")
+    local snack = M.configure_snacks(swimd.SCANNER_FILES, "files")
     Snacks.picker(snack)
+end
+
+M.is_linux = function ()
+    local os_name = vim.loop.os_uname().sysname
+    return os_name == "Linux"
 end
 
 M.configure_snacks = function(scanner, scanner_name)

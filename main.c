@@ -27,6 +27,12 @@
 #define SCANNER_FILES 1
 #define SCANNER_COUNT 2
 
+#ifdef _WIN32
+    #define PATH_SLASH_CHAR '\\'
+#else
+    #define PATH_SLASH_CHAR '/'
+#endif
+
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
 #define ERROR_THRESHOLD 0.2
@@ -1548,7 +1554,7 @@ static void swimd_print_path(char *buf, SwimdFile *file) {
     for (int i = 0; i < file->name_length; i++) {
         buf[buf_length++] = file->name[file->name_length - i - 1];
     }
-    buf[buf_length++] = '\\';
+    buf[buf_length++] = PATH_SLASH_CHAR;
     SwimdFolderStruct *cur_folder = file->folder;
     while (1) {
         for (int i = 0; i < cur_folder->name_length; i++) {
@@ -1556,7 +1562,7 @@ static void swimd_print_path(char *buf, SwimdFile *file) {
         }
         if (IS_ROOT_FOLDER(cur_folder))
             break;
-        buf[buf_length++] = '\\';
+        buf[buf_length++] = PATH_SLASH_CHAR;
         cur_folder = cur_folder->parent;
     }
     buf_length--;

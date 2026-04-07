@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, "main.c");
     if (!nob_cmd_run(&cmd)) return 1;
 #else
-    if (!nob_copy_file("libgit2\\git2.dll", "git2.dll")) return 1;
+    if (!nob_copy_file("libgit2\\git2.dll", "build\\git2.dll")) return 1;
 
     Nob_Cmd cmd = {0};
 
