@@ -29,7 +29,7 @@ end
 M.lib_path = function ()
     local plugin_dir = M.plugin_root()
     local result = plugin_dir .. '/../../build/'
-    if M.is_linux then
+    if M.is_linux() then
         result = result .. '?.so'
     else
         result = result .. '?.dll'
@@ -40,7 +40,7 @@ end
 M.dependent_libs = function ()
     local plugin_dir = M.plugin_root()
     local result = plugin_dir .. '/../../build/'
-    if M.is_linux then
+    if M.is_linux() then
         result = result .. 'libgit2.so'
     else
         result = result .. 'git2.dll'

@@ -1,15 +1,13 @@
-CC = cl
-	
 all: main
 
-nob.exe:
-	$(CC) -out:build\nob.exe nob.c
+build/nob.exe:
+	cl /Fe:build\nob.exe nob.c
 
-main: build\nob.exe
+main: build/nob.exe
 	build\nob.exe
 
 clean:
-	del *.exe *.exp *.lib *.obj *.dll *.pdb *.idb *.ilk *.log
+	del *.exe *.exp *.lib *.obj *.dll *.pdb *.idb *.ilk *.log *.old
 	rmdir /s /q build
 	mkdir build
 	type nul > build\.gitkeep

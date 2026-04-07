@@ -82,19 +82,19 @@ static void swimd_thread_close(HANDLE *t) {
 }
 
 static void swimd_crit_init(CRITICAL_SECTION *lock) {
-    InitializeCriticalSection(*lock);
+    InitializeCriticalSection(lock);
 }
 
 static void swimd_crit_lock(CRITICAL_SECTION *lock) {
-    EnterCriticalSection(*lock);
+    EnterCriticalSection(lock);
 }
 
 static void swimd_crit_unlock(CRITICAL_SECTION *lock) {
-    LeaveCriticalSection(*lock);
+    LeaveCriticalSection(lock);
 }
 
 static void swimd_crit_close(CRITICAL_SECTION *lock) {
-    DeleteCriticalSection(*lock);
+    DeleteCriticalSection(lock);
 }
 
 static void swimd_are_init(HANDLE *ev, bool initial_state) {
@@ -106,7 +106,7 @@ static void swimd_are_wait(HANDLE *ev) {
 }
 
 static void swimd_are_set(HANDLE *ev) {
-    SetEvent(*ev, INFINITE);
+    SetEvent(*ev);
 }
 
 static void swimd_are_close(HANDLE *ev) {
@@ -122,7 +122,7 @@ static void swimd_mre_wait(HANDLE *ev) {
 }
 
 static void swimd_mre_set(HANDLE *ev) {
-    SetEvent(*ev, INFINITE);
+    SetEvent(*ev);
 }
 
 static void swimd_mre_reset(HANDLE *ev) {
@@ -557,7 +557,7 @@ static void swimd_list_files_win32(const char *root_dir,
                 strcat(inner_folder, "\\");
                 strcat(inner_folder, current_file);
 
-                swimd_list_files_wi(inner_folder, file_list, folder_node, refreshing);
+                swimd_list_files_win32(inner_folder, file_list, folder_node, refreshing);
             }
         } else {
             char *file_name = malloc((current_file_len + 1) * sizeof(char));
