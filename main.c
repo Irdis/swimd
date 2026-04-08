@@ -1090,7 +1090,7 @@ static void swimd_setup_needle_free(SwimdScanner *scanner) {
     swimd_prep_needle_vec_free(scanner);
 }
 
-void swimd_vec_estimate_diag(short *d,
+void swimd_vec_estimate_diagnostic(short *d,
         int ind,
         char* needle,
         int needle_length,
@@ -1220,12 +1220,12 @@ static void swimd_simd_haystack_scores(short *d,
         int file_name_length = files->arr[file_index].name_length;
         scores[file_index] = d[D_IND(needle_length, file_name_length) + i];
 #ifdef DEBUG_PRINT
-        swimd_vec_estimate_diag(d,
-                i,
-                needle,
-                needle_length,
-                file_name,
-                file_name_length);
+        // swimd_vec_estimate_diagnostic(d,
+        //         i,
+        //         needle,
+        //         needle_length,
+        //         file_name,
+        //         file_name_length);
 #endif
     }
 }
@@ -1335,7 +1335,7 @@ static int swimd_compare_heap_item(const void *a, const void *b) {
     return a_item->score > b_item->score ? 1 : -1;
 }
 
-static void swimd_top_scores_diag(
+static void swimd_top_scores_diagnostic(
         int min_score,
         int max_score,
         int score,
@@ -1354,6 +1354,7 @@ static void swimd_top_scores_diag(
     nob_sb_appendf(&sb, "needle = %s\n", needle);
     nob_sb_appendf(&sb, "file   = %s\n", file_name);
     swimd_log_append(sb.items);
+
     nob_sb_free(sb);
 }
 
@@ -1385,13 +1386,13 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
         normalized_score -= len_diff_error;
 
 #ifdef DEBUG_PRINT
-        swimd_top_scores_diag(min_score,
-                max_score,
-                score,
-                normalized_score,
-                len_diff_error,
-                scanner->needle,
-                file->name);
+        // swimd_top_scores_diag(min_score,
+        //         max_score,
+        //         score,
+        //         normalized_score,
+        //         len_diff_error,
+        //         scanner->needle,
+        //         file->name);
 #endif
         if (normalized_score < ERROR_THRESHOLD * 100) {
             continue;
