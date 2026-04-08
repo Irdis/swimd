@@ -28,6 +28,7 @@
 #define SCANNER_FILES 1
 #define SCANNER_COUNT 2
 
+#define PATH_SLASH_GIT_CHAR '/'
 #ifdef _WIN32
     #define PATH_SLASH_CHAR '\\'
 #else
@@ -293,6 +294,7 @@ typedef struct  {
 } SwimdScoresHeap;
 
 typedef void (*swimd_scanning_func)(const char*,
+        char*,
         SwimdFileList*,
         SwimdFolderStruct*,
         bool);
@@ -336,6 +338,7 @@ typedef struct {
     volatile bool scan_in_progress;
     volatile bool scan_is_refreshing;
     char *scan_path;
+    char *base_path;
     int scan_files_count;
     int scan_files_refresh_count;
 
@@ -344,10 +347,12 @@ typedef struct {
 } SwimdScanner;
 
 static void swimd_list_files(const char *root_dir,
+        char *base_path,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
         bool refreshing);
 static void swimd_list_git(const char *root_dir,
+        char *base_path,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
         bool refreshing);
@@ -658,9 +663,14 @@ static void swimd_list_files_linux(const char *root_dir,
 #endif
 
 static void swimd_list_files(const char *root_dir,
+        char *base_path,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
         bool refreshing) {
+    int root_dir_len = strlen(root_dir);
+    strncpy(base_path, root_dir, root_dir_len);
+    base_path[root_dir_len] = '\0';
+
 #ifdef _WIN32
     swimd_list_files_win32(root_dir,
         file_list,
@@ -689,7 +699,19 @@ static void swimd_log_git2_error(const char *message, int error) {
     swimd_log_append("%s [%d] %s", message, error, lg2msg);
 }
 
-static int swimd_path_match_depth(const char *a, const char *b) {
+static int swimd_path_depth(const char *a, char separator) {
+    int depth = 0;
+    int ind = 0;
+    while (1) {
+        if (a[ind] == '\0')
+            return depth;
+        if (a[ind] == separator)
+            depth++;
+        ind++;
+    }
+}
+
+static int swimd_path_match_depth(const char *a, const char *b, char separator) {
     int match_depth = 0;
     int ind = 0;
     while (1) {
@@ -699,7 +721,7 @@ static int swimd_path_match_depth(const char *a, const char *b) {
         if (a[ind] != b[ind]) {
             return match_depth;
         }
-        if (a[ind] == '/') {
+        if (a[ind] == separator) {
             match_depth++;
         }
         ind++;
@@ -716,9 +738,9 @@ static SwimdFolderStruct* swimd_folder_go_up(SwimdFolderStruct *folder,
 }
 
 static const char *swimd_path_skip_folder_count(const char *path,
-        int folder_count) {
+        int folder_count, char separator) {
     while (folder_count > 0) {
-        if (*path == '/') {
+        if (*path == separator) {
             folder_count--;
         }
         path++;
@@ -747,12 +769,12 @@ static SwimdFolderStruct* swimd_process_path(const char *path,
         int *res_depth,
         bool refreshing) {
     SwimdScanner *scanner = &swimd_scanners[SCANNER_GIT];
-    int match_depth = swimd_path_match_depth(path, cur_path);
+    int match_depth = swimd_path_match_depth(path, cur_path, PATH_SLASH_GIT_CHAR);
     int up_count = cur_depth - match_depth;
     *res_depth = cur_depth - up_count;
 
     SwimdFolderStruct *base_folder = swimd_folder_go_up(cur_folder, up_count);
-    const char *base_path = swimd_path_skip_folder_count(path, match_depth);
+    const char *base_path = swimd_path_skip_folder_count(path, match_depth, PATH_SLASH_GIT_CHAR);
 
     int segment_len = 0;
     while (1) {
@@ -905,11 +927,21 @@ cleanup:
     git_status_list_free(status_list);
 }
 
+static void swimd_list_git_normalize_base_path(char *base_path) {
+    if (PATH_SLASH_CHAR == PATH_SLASH_GIT_CHAR) 
+        return;
+    int base_path_len = strlen(base_path);
+    for (int i = 0; i < base_path_len; i++) {
+        if (base_path[i] == PATH_SLASH_GIT_CHAR)
+            base_path[i] = PATH_SLASH_CHAR;
+    }
+
+}
 static void swimd_list_git(const char *root_dir,
+        char *base_path,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
         bool refreshing) {
-    printf("scanning git\n");
     git_repository *repo = NULL;
 
     int repo_result = git_repository_open_ext(&repo, root_dir, 0, NULL);
@@ -920,6 +952,14 @@ static void swimd_list_git(const char *root_dir,
         swimd_log_git2_error("Unable to open git repository", repo_result);
         goto cleanup;
     }
+
+    const char *repo_path = git_repository_workdir(repo);
+    int repo_path_length = strlen(repo_path);
+    repo_path_length--; // cut last slash
+    strncpy(base_path, repo_path, repo_path_length);
+    base_path[repo_path_length] = '\0';
+    swimd_list_git_normalize_base_path(base_path);
+
     swimd_git_collect_index_paths(repo,
             file_list,
             root_folder,
@@ -1343,6 +1383,7 @@ static void swimd_scanner_free(SwimdScanner *scanner) {
 
     free(scanner->files);
     free(scanner->folders);
+    free(scanner->base_path);
 }
 
 static void swimd_scanner_init(const char *root_path, SwimdScanner *scanner) {
@@ -1350,17 +1391,19 @@ static void swimd_scanner_init(const char *root_path, SwimdScanner *scanner) {
 
     SwimdFileList *files = malloc(sizeof(SwimdFileList));
     SwimdFolderStruct *folders = malloc(sizeof(SwimdFolderStruct));
+    char *base_path = malloc(MAX_PATH_LENGTH * sizeof(char));
     swimd_init_root_folder(folders);
 
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
 
-    scanner->scanning_func(root_path, files, folders, false);
+    scanner->scanning_func(root_path, base_path, files, folders, false);
 
     swimd_crit_lock(&scanner->scan_state_swap);
 
     scanner->files = files;
     scanner->folders = folders;
+    scanner->base_path = base_path;
 
     swimd_prep_files_vec(scanner);
     swimd_scores_init(scanner);
@@ -1375,12 +1418,13 @@ static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) 
 
     SwimdFileList *files = malloc(sizeof(SwimdFileList));
     SwimdFolderStruct *folders = malloc(sizeof(SwimdFolderStruct));
+    char *base_path = malloc(MAX_PATH_LENGTH * sizeof(char));
     swimd_init_root_folder(folders);
 
     swimd_file_list_init(files);
     swimd_folders_init(&folders->folder_lst);
 
-    scanner->scanning_func(root_path, files, folders, true);
+    scanner->scanning_func(root_path, base_path, files, folders, true);
 
     swimd_crit_lock(&scanner->scan_state_swap);
 
@@ -1388,6 +1432,7 @@ static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) 
 
     scanner->files = files;
     scanner->folders = folders;
+    scanner->base_path = base_path;
     scanner->scan_files_count = scanner->scan_files_refresh_count;
 
     swimd_prep_files_vec(scanner);
@@ -1435,7 +1480,6 @@ static DWORD WINAPI swimd_scanning_loop_files(LPVOID lp_param) {
 }
 #else
 static void* swimd_scanning_loop_git(void *lp_param) {
-    printf("swimd_scanning_loop_git\n");
     swimd_scanning_loop_impl(&swimd_scanners[SCANNER_GIT]);
     return NULL;
 }
@@ -1598,9 +1642,37 @@ static void swimd_scan_refresh_path(SwimdScanner *scanner) {
     swimd_are_wait(&scanner->scan_started);
 }
 
+static void swimd_str_shift_right(char *buf, int buf_length, int n) {
+    memmove(buf + n, buf, buf_length); 
+    buf[buf_length + n] = '\0';
+}
+
 static void swimd_str_reverse(char *buf, int buf_length) {
     for (int i = 0; i < buf_length / 2; i++) {
         SWAP(buf[i], buf[buf_length - i - 1], char);
+    }
+}
+
+static void swimd_print_relative(char *file_path, char *scan_path, char *base_path) {
+    int base_path_len = strlen(base_path);
+    int scan_path_len = strlen(scan_path);
+
+    if (base_path_len == scan_path_len)
+        return;
+    int file_path_len = strlen(file_path);
+
+    int scan_path_depth = swimd_path_depth(scan_path, PATH_SLASH_CHAR);
+    int match_count = swimd_path_match_depth(base_path, scan_path, PATH_SLASH_CHAR);
+
+    int up_count = scan_path_depth - match_count;
+
+    int pref_len = up_count * 3;
+    swimd_str_shift_right(file_path, file_path_len, pref_len);
+
+    for (int i = 0; i < up_count; i++) {
+        file_path[3*i + 0] = '.';
+        file_path[3*i + 1] = '.';
+        file_path[3*i + 2] = PATH_SLASH_CHAR;
     }
 }
 
@@ -1642,6 +1714,7 @@ static void swimd_process_input(const char *needle,
 
         char path[MAX_PATH_LENGTH];
         swimd_print_path(path, &file);
+        swimd_print_relative(path, scanner->scan_path, scanner->base_path);
         int path_length = strlen(path);
 
         SwimdProcessInputResultItem item = {0};
@@ -1921,7 +1994,15 @@ static void swimd_scenario_scanning(void) {
 }
 
 int main() {
-    swimd_scenario_scanning();
+    const char* p = "f1/foo.txt";
+    char buf[MAX_PATH_LENGTH];
+    strcpy(buf, p);
+    buf[strlen(p)] = '\0';
+
+    swimd_print_relative(buf, "abc/bb/dd", "abc");
+    // printf("hello\n");
+    printf("|%s|\n", buf);
+    // swimd_scenario_scanning();
     // swimd_scenario_setup_path();
 
     return 0;
