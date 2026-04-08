@@ -699,8 +699,25 @@ static void swimd_log_git2_error(const char *message, int error) {
     swimd_log_append("%s [%d] %s", message, error, lg2msg);
 }
 
+static int swimd_path_length(const char *a, int segment_count, char separator) {
+    if (segment_count == 0)
+        return 0;
+    int ind = 0;
+    while(1) {
+        if (a[ind] == separator) {
+            segment_count--;
+        }
+        if (segment_count == 0) {
+            return ind;
+        }
+        if (a[ind] == '\0') {
+            return ind;
+        }
+        ind++;
+    }
+}
 static int swimd_path_depth(const char *a, char separator) {
-    int depth = 0;
+    int depth = 1;
     int ind = 0;
     while (1) {
         if (a[ind] == '\0')
@@ -716,6 +733,10 @@ static int swimd_path_match_depth(const char *a, const char *b, char separator) 
     int ind = 0;
     while (1) {
         if (a[ind] == '\0' || b[ind] == '\0') {
+            if (a[ind] == b[ind] || 
+                a[ind] == separator ||
+                b[ind] == separator)
+                return match_depth + 1;
             return match_depth;
         }
         if (a[ind] != b[ind]) {
@@ -1647,6 +1668,11 @@ static void swimd_str_shift_right(char *buf, int buf_length, int n) {
     buf[buf_length + n] = '\0';
 }
 
+static void swimd_str_shift_left(char *buf, int buf_length, int n) {
+    memmove(buf, buf + n, buf_length - n); 
+    buf[buf_length - n] = '\0';
+}
+
 static void swimd_str_reverse(char *buf, int buf_length) {
     for (int i = 0; i < buf_length / 2; i++) {
         SWAP(buf[i], buf[buf_length - i - 1], char);
@@ -1662,9 +1688,18 @@ static void swimd_print_relative(char *file_path, char *scan_path, char *base_pa
     int file_path_len = strlen(file_path);
 
     int scan_path_depth = swimd_path_depth(scan_path, PATH_SLASH_CHAR);
-    int match_count = swimd_path_match_depth(base_path, scan_path, PATH_SLASH_CHAR);
+    int absolute_match_count = swimd_path_match_depth(base_path, scan_path, PATH_SLASH_CHAR);
 
-    int up_count = scan_path_depth - match_count;
+    int up_count = scan_path_depth - absolute_match_count;
+
+    int relative_match_depth = swimd_path_match_depth(file_path, scan_path + base_path_len + 1, PATH_SLASH_CHAR);
+    up_count -= relative_match_depth;
+
+    int math_len = swimd_path_length(file_path, relative_match_depth, PATH_SLASH_CHAR);
+    if (file_path[math_len] == PATH_SLASH_CHAR)
+        math_len++;
+
+    swimd_str_shift_left(file_path, file_path_len, math_len);
 
     int pref_len = up_count * 3;
     swimd_str_shift_right(file_path, file_path_len, pref_len);
@@ -1675,6 +1710,13 @@ static void swimd_print_relative(char *file_path, char *scan_path, char *base_pa
         file_path[3*i + 2] = PATH_SLASH_CHAR;
     }
 }
+// a1/a2
+// 
+// b1/b2.txt
+// ../../b1/b2.txt
+//
+// a1/x2/x3.txt
+// ../x2
 
 static void swimd_print_path(char *buf, SwimdFile *file) {
     int buf_length = 0;
@@ -1994,12 +2036,13 @@ static void swimd_scenario_scanning(void) {
 }
 
 int main() {
-    const char* p = "f1/foo.txt";
+    const char *p = "sound/sound_core.c";
+    // const char* p = "aboba/sound_core.c";
     char buf[MAX_PATH_LENGTH];
     strcpy(buf, p);
     buf[strlen(p)] = '\0';
 
-    swimd_print_relative(buf, "abc/bb/dd", "abc");
+    swimd_print_relative(buf, "home/linux/sound/a1", "home/linux");
     // printf("hello\n");
     printf("|%s|\n", buf);
     // swimd_scenario_scanning();
