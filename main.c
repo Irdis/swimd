@@ -1695,11 +1695,11 @@ static void swimd_print_relative(char *file_path, char *scan_path, char *base_pa
     int relative_match_depth = swimd_path_match_depth(file_path, scan_path + base_path_len + 1, PATH_SLASH_CHAR);
     up_count -= relative_match_depth;
 
-    int math_len = swimd_path_length(file_path, relative_match_depth, PATH_SLASH_CHAR);
-    if (file_path[math_len] == PATH_SLASH_CHAR)
-        math_len++;
+    int relative_math_len = swimd_path_length(file_path, relative_match_depth, PATH_SLASH_CHAR);
+    if (file_path[relative_math_len] == PATH_SLASH_CHAR)
+        relative_math_len++;
 
-    swimd_str_shift_left(file_path, file_path_len, math_len);
+    swimd_str_shift_left(file_path, file_path_len, relative_math_len);
 
     int pref_len = up_count * 3;
     swimd_str_shift_right(file_path, file_path_len, pref_len);
@@ -1710,13 +1710,6 @@ static void swimd_print_relative(char *file_path, char *scan_path, char *base_pa
         file_path[3*i + 2] = PATH_SLASH_CHAR;
     }
 }
-// a1/a2
-// 
-// b1/b2.txt
-// ../../b1/b2.txt
-//
-// a1/x2/x3.txt
-// ../x2
 
 static void swimd_print_path(char *buf, SwimdFile *file) {
     int buf_length = 0;
@@ -2036,16 +2029,7 @@ static void swimd_scenario_scanning(void) {
 }
 
 int main() {
-    const char *p = "sound/sound_core.c";
-    // const char* p = "aboba/sound_core.c";
-    char buf[MAX_PATH_LENGTH];
-    strcpy(buf, p);
-    buf[strlen(p)] = '\0';
-
-    swimd_print_relative(buf, "home/linux/sound/a1", "home/linux");
-    // printf("hello\n");
-    printf("|%s|\n", buf);
-    // swimd_scenario_scanning();
+    swimd_scenario_scanning();
     // swimd_scenario_setup_path();
 
     return 0;
