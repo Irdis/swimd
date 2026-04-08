@@ -239,6 +239,13 @@ static void swimd_mre_close(SwimdManualResetEvent *ev) {
 }
 #endif
 
+typedef enum {
+    SWIMD_INFO,
+    SWIMD_WARN,
+    SWIMD_ERR,
+    SWIMD_DEBUG,
+} SwimdLogLevel;
+
 typedef struct  {
     char *path;
     char *name;
@@ -423,9 +430,24 @@ static void swimd_global_free(void) {
     swimd_log_free();
 }
 
-static void swimd_log_append(const char *msg, ...) {
+static void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
     if (!swimd_log_enabled) {
         return;
+    }
+    const char *level_str;
+    switch (level) {
+        case SWIMD_INFO: 
+            level_str = "INFO";
+            break;
+        case SWIMD_WARN: 
+            level_str = "WARN";
+            break;
+        case SWIMD_ERR: 
+            level_str = "ERR";
+            break;
+        case SWIMD_DEBUG:
+            level_str = "DEBUG";
+            break;
     }
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
@@ -448,6 +470,7 @@ static void swimd_log_append(const char *msg, ...) {
         t.tm_sec,
         ts.tv_nsec
     );
+    printf("[%s] ", level_str);
 #endif
 
     fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
@@ -459,6 +482,8 @@ static void swimd_log_append(const char *msg, ...) {
         t.tm_sec,
         ts.tv_nsec
     );
+    fprintf(swimd_log, "[%s] ", level_str);
+
     va_list args;
     va_start(args, msg);
 
@@ -513,7 +538,7 @@ static void swimd_file_list_append(SwimdFileList *lst, SwimdFile file) {
     lst->arr[lst->length] = file;
     lst->length++;
     if (lst->length % 10000 == 0)
-        swimd_log_append("Scanned file count %d", lst->length);
+        swimd_log_append(SWIMD_INFO, "Scanned file count %d", lst->length);
 }
 
 static void swimd_file_list_free(SwimdFileList *lst) {
@@ -596,13 +621,14 @@ static void swimd_list_files_win32(const char *root_dir,
     {
         DWORD dw_error = GetLastError();
         if (dw_error != ERROR_NO_MORE_FILES) {
-            swimd_log_append("FindNextFile error (%lu)", dw_error);
+            swimd_log_append(SWIMD_ERR, "FindNextFile error (%lu)", dw_error);
         }
     }
 
     FindClose(h_find);
 }
 #else 
+
 static void swimd_list_files_linux(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
@@ -612,7 +638,7 @@ static void swimd_list_files_linux(const char *root_dir,
     struct dirent *entry;
     DIR *dp = opendir(root_dir);
     if (dp == NULL) {
-        swimd_log_append("Unable to opendir %s", root_dir);
+        swimd_log_append(SWIMD_ERR, "Unable to opendir %s", root_dir);
         return;
     }
 
@@ -699,7 +725,7 @@ static void swimd_log_git2_error(const char *message, int error) {
         lg2msg = lg2err->message;
     }
 
-    swimd_log_append("%s [%d] %s", message, error, lg2msg);
+    swimd_log_append(SWIMD_ERR, "%s [%d] %s", message, error, lg2msg);
 }
 
 static int swimd_path_length(const char *a, int segment_count, char separator) {
@@ -970,7 +996,7 @@ static void swimd_list_git(const char *root_dir,
 
     int repo_result = git_repository_open_ext(&repo, root_dir, 0, NULL);
     if (repo_result == GIT_ENOTFOUND) {
-        swimd_log_append("Not a git repository %s", root_dir);
+        swimd_log_append(SWIMD_INFO, "Not a git repository %s", root_dir);
         goto cleanup;
     } else if (repo_result < 0) {
         swimd_log_git2_error("Unable to open git repository", repo_result);
@@ -1108,7 +1134,7 @@ void swimd_vec_estimate_diagnostic(short *d,
     }
     nob_sb_append_cstr(&sb, "\n");
     nob_sb_append_null(&sb);
-    swimd_log_append(sb.items);
+    swimd_log_append(SWIMD_DEBUG, sb.items);
     nob_sb_free(sb);
 }
 
@@ -1220,12 +1246,12 @@ static void swimd_simd_haystack_scores(short *d,
         int file_name_length = files->arr[file_index].name_length;
         scores[file_index] = d[D_IND(needle_length, file_name_length) + i];
 #ifdef DEBUG_PRINT
-        // swimd_vec_estimate_diagnostic(d,
-        //         i,
-        //         needle,
-        //         needle_length,
-        //         file_name,
-        //         file_name_length);
+        swimd_vec_estimate_diagnostic(d,
+                i,
+                needle,
+                needle_length,
+                file_name,
+                file_name_length);
 #endif
     }
 }
@@ -1353,7 +1379,7 @@ static void swimd_top_scores_diagnostic(
     nob_sb_appendf(&sb, "len_diff_err = %d\n", len_diff_error);
     nob_sb_appendf(&sb, "needle = %s\n", needle);
     nob_sb_appendf(&sb, "file   = %s\n", file_name);
-    swimd_log_append(sb.items);
+    swimd_log_append(SWIMD_DEBUG, sb.items);
 
     nob_sb_free(sb);
 }
@@ -1371,7 +1397,7 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
                 &max_score);
         short score = scanner->scores[i];
         if (score < min_score || score > max_score) {
-            swimd_log_append("Score outside of the borders needle '%s' file '%s' score %d min %d max %d",
+            swimd_log_append(SWIMD_ERR, "Score outside of the borders needle '%s' file '%s' score %d min %d max %d",
                     scanner->needle,
                     file->name,
                     score,
@@ -1436,7 +1462,7 @@ static void swimd_scanner_free(SwimdScanner *scanner) {
 }
 
 static void swimd_scanner_init(const char *root_path, SwimdScanner *scanner) {
-    swimd_log_append("Scanning path started %s", root_path);
+    swimd_log_append(SWIMD_INFO, "Scanning path started %s", root_path);
 
     SwimdFileList *files = malloc(sizeof(SwimdFileList));
     SwimdFolderStruct *folders = malloc(sizeof(SwimdFolderStruct));
@@ -1459,11 +1485,11 @@ static void swimd_scanner_init(const char *root_path, SwimdScanner *scanner) {
 
     swimd_crit_unlock(&scanner->scan_state_swap);
 
-    swimd_log_append("Scanning path completed");
+    swimd_log_append(SWIMD_INFO, "Scanning path completed");
 }
 
 static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) {
-    swimd_log_append("Refreshing path started %s", root_path);
+    swimd_log_append(SWIMD_INFO, "Refreshing path started %s", root_path);
 
     SwimdFileList *files = malloc(sizeof(SwimdFileList));
     SwimdFolderStruct *folders = malloc(sizeof(SwimdFolderStruct));
@@ -1489,11 +1515,11 @@ static void swimd_scanner_refresh(const char *root_path, SwimdScanner *scanner) 
 
     swimd_crit_unlock(&scanner->scan_state_swap);
 
-    swimd_log_append("Refreshing path completed");
+    swimd_log_append(SWIMD_INFO, "Refreshing path completed");
 }
 
 static void swimd_scanning_loop_impl(SwimdScanner *scanner) {
-    swimd_log_append("Scanning loop start");
+    swimd_log_append(SWIMD_INFO, "Scanning loop start");
     while (1) {
         swimd_are_wait(&scanner->scan_begin);
 
@@ -1514,7 +1540,7 @@ static void swimd_scanning_loop_impl(SwimdScanner *scanner) {
 
         swimd_mre_set(&scanner->scan_finished);
     }
-    swimd_log_append("Scanning loop exit");
+    swimd_log_append(SWIMD_INFO, "Scanning loop exit");
 }
 
 #ifdef _WIN32
@@ -1833,7 +1859,7 @@ static void swimd_scan_process_input_free(SwimdProcessInputResult *result) {
 
 static int swimd_lua_init(lua_State *L) {
     if (swimd_initialized) {
-        swimd_log_append("Already initialized");
+        swimd_log_append(SWIMD_INFO, "Already initialized");
         return 0;
     }
     swimd_initialized = true;
@@ -1843,13 +1869,13 @@ static int swimd_lua_init(lua_State *L) {
 
     swimd_global_init(log_path);
 
-    swimd_log_append("Initializing");
+    swimd_log_append(SWIMD_INFO, "Initializing");
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scan_glob_init(&swimd_scanners[i]);
     }
 
-    swimd_log_append("Initializing completed");
+    swimd_log_append(SWIMD_INFO, "Initializing completed");
     return 0;
 }
 
@@ -1857,13 +1883,13 @@ static int swimd_lua_shutdown(lua_State *L) {
     if (!swimd_initialized) {
         return 0;
     }
-    swimd_log_append("Shutting down");
+    swimd_log_append(SWIMD_INFO, "Shutting down");
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scan_glob_free(&swimd_scanners[i]);
     }
 
-    swimd_log_append("Shutting down completed");
+    swimd_log_append(SWIMD_INFO, "Shutting down completed");
 
     swimd_global_free();
 
@@ -1874,24 +1900,24 @@ static int swimd_lua_shutdown(lua_State *L) {
 static int swimd_lua_setup_workspace(lua_State *L) {
     const char *workspace = luaL_checkstring(L, 1);
 
-    swimd_log_append("Setting up workspace path %s", workspace);
+    swimd_log_append(SWIMD_INFO, "Setting up workspace path %s", workspace);
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scan_setup_path(workspace, &swimd_scanners[i]);
     }
 
-    swimd_log_append("Workspace path setup");
+    swimd_log_append(SWIMD_INFO, "Workspace path setup");
     return 0;
 }
 
 static int swimd_lua_refresh_workspace(lua_State *L) {
-    swimd_log_append("Refreshing workspace");
+    swimd_log_append(SWIMD_INFO, "Refreshing workspace");
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scan_refresh_path(&swimd_scanners[i]);
     }
 
-    swimd_log_append("Refresh requested");
+    swimd_log_append(SWIMD_INFO, "Refresh requested");
     return 0;
 }
 
@@ -1954,7 +1980,7 @@ static int swimd_lua_sayhello(lua_State *L) {
 
 static int swimd_lua_log(lua_State *L) {
     const char *str = luaL_checkstring(L, 1);
-    swimd_log_append("[swimd-lua]: %s", str);
+    swimd_log_append(SWIMD_INFO, "[swimd-lua]: %s", str);
     return 1;
 }
 
