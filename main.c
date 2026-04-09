@@ -19,6 +19,7 @@
 #include "git2.h"
 
 #define NOB_IMPLEMENTATION
+#undef ERROR
 #include "nob.h"
 
 #ifdef _WIN32
@@ -564,7 +565,7 @@ static void swimd_list_files_win32(const char *root_dir,
     h_find = FindFirstFile(root_mask, &find_file_data);
 
     if (h_find == INVALID_HANDLE_VALUE) {
-        swimd_log_append("FindFirstFile failed (%lu)\n", GetLastError());
+        swimd_log_append(SWIMD_ERR, "FindFirstFile failed (%lu)\n", GetLastError());
         return;
     }
 

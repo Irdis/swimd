@@ -14,8 +14,8 @@ clean:
 
 publish:
 	rmdir /s /q release\win
-	mkdir build
-	copy build\swimd.dll release\win\
-	copy build\git2.dll release\win\
-	copy build\version release\win\
-	type nul > release\win
+	mkdir release\win
+	copy build\swimd.dll release\win\\
+	copy build\git2.dll release\win\\
+	copy build\version release\win\\
+	type nul > release\win\.gitkeep
