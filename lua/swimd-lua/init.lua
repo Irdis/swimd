@@ -12,7 +12,6 @@ M.setup = function()
 end
 
 M.setup_libs = function ()
-    M.log('checking version')
     if M.swimd_exist_and_version_match() then
         M.log('match')
         return
