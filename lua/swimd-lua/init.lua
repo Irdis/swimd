@@ -212,19 +212,19 @@ M.copy_folder_content = function (source_path, dest_path)
 end
 
 M.copy_file = function(source_path, dest_path)
-    local inputFile = io.open(source_path, "rb")
-    if not inputFile then return nil, "Source file not found" end
+    local input_file = io.open(source_path, "rb")
+    if not input_file then return nil, "Source file not found" end
 
-    local outputFile = io.open(dest_path, "wb")
-    if not outputFile then
-        inputFile:close()
+    local output_file = io.open(dest_path, "wb")
+    if not output_file then
+        input_file:close()
         return nil, "Cannot open destination file"
     end
 
-    outputFile:write(inputFile:read("a"))
+    output_file:write(input_file:read("a"))
 
-    outputFile:close()
-    inputFile:close()
+    output_file:close()
+    input_file:close()
 end
 
 return M
