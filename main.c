@@ -372,8 +372,8 @@ static void swimd_list_git(const char *root_dir,
 static DWORD WINAPI swimd_scanning_loop_git(LPVOID lp_param);
 static DWORD WINAPI swimd_scanning_loop_files(LPVOID lp_param);
 #else
-static void* swimd_scanning_loop_git(void* lp_param);
-static void* swimd_scanning_loop_files(void* lp_param);
+static void* swimd_scanning_loop_git(void *lp_param);
+static void* swimd_scanning_loop_files(void *lp_param);
 #endif
 
 static bool swimd_initialized = false;
@@ -397,12 +397,12 @@ static void swimd_log_init(const char *log_path) {
     }
 }
 
-static void swimd_scanner_init_git() {
+static void swimd_scanner_init_git(void) {
     swimd_scanners[SCANNER_GIT].scanning_func = &swimd_list_git;
     swimd_scanners[SCANNER_GIT].scanning_loop = &swimd_scanning_loop_git;
 }
 
-static void swimd_scanner_init_files() {
+static void swimd_scanner_init_files(void) {
     swimd_scanners[SCANNER_FILES].scanning_func = &swimd_list_files;
     swimd_scanners[SCANNER_FILES].scanning_loop = &swimd_scanning_loop_files;
 }
@@ -1119,9 +1119,9 @@ static void swimd_setup_needle_free(SwimdScanner *scanner) {
 
 void swimd_vec_estimate_diagnostic(short *d,
         int ind,
-        char* needle,
+        char *needle,
         int needle_length,
-        char* file_name,
+        char *file_name,
         int file_name_length) {
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "\n===== swimd_vec_estimate_diag ====\n");
@@ -1193,7 +1193,7 @@ static void swimd_simd_haystack_scores(short *d,
     short *scores,
     short *gap_distr_fun,
     SwimdFileList *files,
-    char* needle
+    char *needle
 ) {
     int needle_length = needle_vec_length / LANES_COUNT_SHORT;
     int haystack_max_length = haystack_vec_length / LANES_COUNT_SHORT;
@@ -1247,12 +1247,12 @@ static void swimd_simd_haystack_scores(short *d,
         int file_name_length = files->arr[file_index].name_length;
         scores[file_index] = d[D_IND(needle_length, file_name_length) + i];
 #ifdef DEBUG_PRINT
-        swimd_vec_estimate_diagnostic(d,
-                i,
-                needle,
-                needle_length,
-                file_name,
-                file_name_length);
+        // swimd_vec_estimate_diagnostic(d,
+        //         i,
+        //         needle,
+        //         needle_length,
+        //         file_name,
+        //         file_name_length);
 #endif
     }
 }
