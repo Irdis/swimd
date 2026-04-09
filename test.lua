@@ -1,7 +1,7 @@
 local os_name = vim.loop.os_uname().sysname
 
 if os_name == "Windows_NT" then
-    package.loadlib('./build/libgit2.dll', '')
+    package.loadlib('./build/git2.dll', '')
     package.cpath = './build/?.dll;' .. package.cpath
 elseif os_name == "Linux" then
     package.loadlib('./build/libgit2.so', '')
