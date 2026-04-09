@@ -13,7 +13,6 @@ end
 
 M.setup_libs = function ()
     if M.swimd_exist_and_version_match() then
-        M.log('match')
         return
     end
     M.log('Updating binaries...')
