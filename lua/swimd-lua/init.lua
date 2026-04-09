@@ -1,7 +1,5 @@
 local M = {}
 
-local lfs = require("lfs")
-
 M.setup = function()
     M.setup_libs()
     M.load_libs()
@@ -14,7 +12,9 @@ M.setup = function()
 end
 
 M.setup_libs = function ()
+    M.log('checking version')
     if M.swimd_exist_and_version_match() then
+        M.log('match')
         return
     end
     M.log('Updating binaries...')
@@ -91,7 +91,7 @@ end
 M.plugin_dir = function ()
     local source = debug.getinfo(1, "S").source:sub(2)
     local plugin_dir = vim.fn.fnamemodify(source, ":p:h")
-    return plugin_dir
+    return plugin_dir .. '/'
 end
 
 M.open_picker_git = function ()
@@ -165,7 +165,8 @@ M.log = function(msg)
 end
 
 M.clean_dir = function (path)
-    for file in lfs.dir(path) do
+    local files = vim.fn.readdir('.')
+    for _, file in ipairs(files) do
         if file ~= "." and file ~= ".." then
             local file_path = path .. '/' .. file
             os.remove(file_path)
@@ -174,7 +175,8 @@ M.clean_dir = function (path)
 end
 
 M.copy_folder_content = function (source_path, dest_path)
-    for file in lfs.dir(source_path) do
+    local files = vim.fn.readdir(source_path)
+    for _, file in ipairs(files) do
         if file ~= "." and file ~= ".." then
             local source_file_path = source_path .. file
             local dest_file_path = dest_path .. file
@@ -184,17 +186,19 @@ M.copy_folder_content = function (source_path, dest_path)
 end
 
 M.copy_file = function(source_path, dest_path)
-    local input_file, err = io.open(source_path, "rb")
-    if not input_file then error("Could not open source: " .. err) end
+    local inputFile = io.open(source_path, "rb")
+    if not inputFile then return nil, "Source file not found" end
 
-    local content = input_file:read("*all")
-    input_file:close()
+    local outputFile = io.open(dest_path, "wb")
+    if not outputFile then
+        inputFile:close()
+        return nil, "Cannot open destination file"
+    end
 
-    local output_file, err = io.open(dest_path, "wb")
-    if not output_file then error("Could not open destination: " .. err) end
+    outputFile:write(inputFile:read("a"))
 
-    output_file:write(content)
-    output_file:close()
+    outputFile:close()
+    inputFile:close()
 end
 
 return M
