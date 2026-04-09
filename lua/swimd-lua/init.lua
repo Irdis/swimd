@@ -118,7 +118,7 @@ M.start_refresh_timer = function ()
         if res.refreshing then
             M.log("refreshing ".. res.refresh_count .."...")
         else
-            M.log("refresh completed ")
+            M.log("refresh completed")
             M.stop_refresh_timer()
         end
     end))

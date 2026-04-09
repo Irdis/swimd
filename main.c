@@ -1,8 +1,8 @@
 #ifdef _WIN32
     #include <windows.h>
 #else
-    #include <pthread.h>  
-    #include <dirent.h>  
+    #include <pthread.h>
+    #include <dirent.h>
 #endif
 #include <stdbool.h>
 #include <string.h>
@@ -437,13 +437,13 @@ static void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
     }
     const char *level_str;
     switch (level) {
-        case SWIMD_INFO: 
+        case SWIMD_INFO:
             level_str = "INFO";
             break;
-        case SWIMD_WARN: 
+        case SWIMD_WARN:
             level_str = "WARN";
             break;
-        case SWIMD_ERR: 
+        case SWIMD_ERR:
             level_str = "ERR";
             break;
         case SWIMD_DEBUG:
@@ -628,7 +628,7 @@ static void swimd_list_files_win32(const char *root_dir,
 
     FindClose(h_find);
 }
-#else 
+#else
 
 static void swimd_list_files_linux(const char *root_dir,
         SwimdFileList *file_list,
@@ -763,7 +763,7 @@ static int swimd_path_match_depth(const char *a, const char *b, char separator) 
     int ind = 0;
     while (1) {
         if (a[ind] == '\0' || b[ind] == '\0') {
-            if (a[ind] == b[ind] || 
+            if (a[ind] == b[ind] ||
                 a[ind] == separator ||
                 b[ind] == separator)
                 return match_depth + 1;
@@ -979,7 +979,7 @@ cleanup:
 }
 
 static void swimd_list_git_normalize_base_path(char *base_path) {
-    if (PATH_SLASH_CHAR == PATH_SLASH_GIT_CHAR) 
+    if (PATH_SLASH_CHAR == PATH_SLASH_GIT_CHAR)
         return;
     int base_path_len = strlen(base_path);
     for (int i = 0; i < base_path_len; i++) {
@@ -1725,12 +1725,12 @@ static void swimd_scan_refresh_path(SwimdScanner *scanner) {
 }
 
 static void swimd_str_shift_right(char *buf, int buf_length, int n) {
-    memmove(buf + n, buf, buf_length); 
+    memmove(buf + n, buf, buf_length);
     buf[buf_length + n] = '\0';
 }
 
 static void swimd_str_shift_left(char *buf, int buf_length, int n) {
-    memmove(buf, buf + n, buf_length - n); 
+    memmove(buf, buf + n, buf_length - n);
     buf[buf_length - n] = '\0';
 }
 
