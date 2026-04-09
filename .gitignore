@@ -9,3 +9,4 @@
 *.ilk
 *.idb
 build/*
+tags
