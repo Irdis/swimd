@@ -11,3 +11,10 @@ clean:
 	rm -f *.log
 	mkdir build/
 	touch build/.gitkeep
+
+publish:
+	rm -rf release/linux/*
+	cp build/swimd.so release/linux/
+	cp build/libgit2.so release/linux/
+	cp build/version release/linux/
+	touch release/linux/.gitkeep

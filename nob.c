@@ -22,6 +22,8 @@ int main(int argc, char **argv)
 {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
+    if (!nob_copy_file("version", "build/version")) return 1;
+
 #if !defined(_MSC_VER)
     if (!nob_copy_file("libgit2/libgit2.so", "build/libgit2.so")) return 1;
 

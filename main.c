@@ -7,15 +7,15 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "assert.h"
-#include "immintrin.h"
-#include "stdio.h"
-#include "stdarg.h"
-#include "limits.h"
-#include "stdlib.h"
+#include <assert.h>
+#include <immintrin.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <time.h>
 #include "lua.h"
 #include "lauxlib.h"
-#include "time.h"
 #include "git2.h"
 
 #define NOB_IMPLEMENTATION
