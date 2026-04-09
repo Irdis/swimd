@@ -1706,6 +1706,11 @@ static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) 
     swimd_are_wait(&scanner->scan_started);
 }
 
+static bool swimd_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
+    bool res = scanner->scan_in_progress;
+    *read_count = scanner->scan_files_refresh_count;
+}
+
 static void swimd_scan_refresh_path(SwimdScanner *scanner) {
     if (scanner->scan_in_progress)
         return;
@@ -1922,6 +1927,34 @@ static int swimd_lua_refresh_workspace(lua_State *L) {
     return 0;
 }
 
+static int swimd_lua_is_refreshing(lua_State *L) {
+    swimd_log_append(SWIMD_INFO, "Quering refresh status");
+
+    bool refreshing = false;
+    int refresh_count = INT_MAX;
+    for (int i = 0; i < SCANNER_COUNT; i++) {
+        int scanner_refresh_count;
+        bool scanner_refreshing = swimd_scan_is_refreshing(&swimd_scanners[i], &scanner_refresh_count);
+        if (scanner_refreshing) {
+            refreshing = true;
+            refresh_count = MIN(refresh_count, scanner_refresh_count);
+        }
+    }
+
+    lua_newtable(L);
+
+    lua_pushstring(L, "refreshing");
+    lua_pushboolean(L, refreshing);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "refresh_count");
+    lua_pushinteger(L, refresh_count);
+    lua_settable(L, -3);
+
+    swimd_log_append(SWIMD_INFO, "Refresh status received");
+    return 1;
+}
+
 static int swimd_lua_process_input(lua_State *L) {
     const char *input = luaL_checkstring(L, 1);
     int max_size = luaL_checknumber(L, 2);
@@ -1991,6 +2024,7 @@ int luaopen_swimd(lua_State *L) {
         {"init", swimd_lua_init},
         {"setup_workspace", swimd_lua_setup_workspace},
         {"refresh_workspace", swimd_lua_refresh_workspace},
+        {"is_refreshing", swimd_lua_is_refreshing},
         {"process_input", swimd_lua_process_input},
         {"shutdown", swimd_lua_shutdown},
         {"say_hello", swimd_lua_sayhello},

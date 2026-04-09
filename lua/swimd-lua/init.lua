@@ -1,5 +1,7 @@
 local M = {}
 
+M.timer = nil
+
 M.setup = function()
     M.setup_libs()
     M.load_libs()
@@ -101,7 +103,33 @@ end
 M.refresh = function ()
     local swimd = require("swimd")
     swimd.refresh_workspace()
-    M.log("refreshing... not going to say when it's over :(")
+    M.log("refreshing...")
+    M.start_refresh_timer()
+end
+
+M.start_refresh_timer = function ()
+    if M.timer then
+        return
+    end
+    M.timer = vim.loop.new_timer()
+    M.timer:start(0, 300, vim.schedule_wrap(function()
+        local swimd = require("swimd")
+        local res = swimd.is_refreshing()
+        if res.refreshing then
+            M.log("refreshing ".. res.refresh_count .."...")
+        else
+            M.log("refresh completed ")
+            M.stop_refresh_timer()
+        end
+    end))
+end
+
+M.stop_refresh_timer = function ()
+    if M.timer then
+        M.timer:stop()
+        M.timer:close()
+        M.timer = nil
+    end
 end
 
 M.open_picker_files = function ()
