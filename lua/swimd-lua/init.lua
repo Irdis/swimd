@@ -94,12 +94,6 @@ M.plugin_dir = function ()
     return plugin_dir .. '/'
 end
 
-M.open_picker_git = function ()
-    local swimd = require("swimd")
-    local snack = M.configure_snacks(swimd.SCANNER_GIT, "git")
-    Snacks.picker(snack)
-end
-
 M.refresh = function ()
     local swimd = require("swimd")
     swimd.refresh_workspace()
@@ -134,48 +128,29 @@ end
 
 M.open_picker_files = function ()
     local swimd = require("swimd")
-    local snack = M.configure_snacks(swimd.SCANNER_FILES, "files")
-    Snacks.picker(snack)
+    local picker = require("swimd-lua/picker")
+    picker.open("files", M.create_data_callback(swimd.SCANNER_FILES))
 end
+
+M.open_picker_git = function ()
+    local swimd = require("swimd")
+    local picker = require("swimd-lua/picker")
+    picker.open("git", M.create_data_callback(swimd.SCANNER_GIT))
+end
+
 
 M.is_linux = function ()
     local os_name = vim.loop.os_uname().sysname
     return os_name == "Linux"
 end
 
-M.configure_snacks = function(scanner, scanner_name)
-    return {
-        title = 'swimd-lua ' .. scanner_name,
-        finder = function(opts, ctx)
-            local swimd = require("swimd")
-            local res = swimd.process_input(ctx.filter.search, 100, scanner)
+M.create_data_callback = function(scanner)
+    return function (input)
+        local swimd = require("swimd")
+        local res = swimd.process_input(input, 100, scanner)
 
-            local items = {}
-            if res.scan_in_progress then
-                local item = {
-                    text = 'scanning '.. res.scanned_items_count
-                }
-                items[#items + 1] = item
-            else
-                for _, swimd_item in ipairs(res.items) do
-                    local item = {
-                        file = './' .. swimd_item.path,
-                    }
-                    items[#items + 1] = item
-                end
-            end
-
-            return items
-        end,
-        preview = "none",
-        layout = { preview = false },
-        formatters = {
-            file = {
-                filename_first = true,
-            },
-        },
-        live = true,
-    }
+        return res
+    end
 end
 
 M.file_exists = function (path)
