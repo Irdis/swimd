@@ -121,7 +121,13 @@ M.update = function (input_event)
     for i = lines_start, lines_end do
         table.insert(lines, M.matches[i])
     end
-    if #M.matches == 0 then table.insert(lines, { name = "No matches", path = "" }) end
+    if #M.matches == 0 then
+        local no_matches = "No matches"
+        if data.scan_in_progress then
+            no_matches = "Scanning " .. data.scanned_items_count .. " ..."
+        end
+        table.insert(lines, { name = no_matches, path = "" })
+    end
     M.draw_lines(M.list_buf, lines)
 
     if M.selected > 0 then
