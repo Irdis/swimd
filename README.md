@@ -10,7 +10,7 @@ It's inspired by [frizbee](https://github.com/saghen/frizbee) but written comple
 ```lua
 {
     "Irdis/swimd",
-    dependencies = { "folke/snacks.nvim" },
+    dependencies = 'kyazdani42/nvim-web-devicons',
     config = function()
         require('swimd-lua').setup();
     end,
