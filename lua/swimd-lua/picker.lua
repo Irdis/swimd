@@ -16,6 +16,8 @@ M.input_win = nil
 M.list_win = nil
 M.data_callback = nil
 
+M.timer = nil
+
 M.open = function(title, data_callback)
     M.data_callback = data_callback
 
@@ -61,28 +63,35 @@ M.draw_lines = function (buf, lines)
     local rendered_text = {}
     local rendered_icons = {}
     for _, match in ipairs(lines) do
-        local ext = match.name:match("%.([^%.]+)$") or ""
-        local icon, hl_name = require("nvim-web-devicons").get_icon(match.name, ext, { default = true })
-        table.insert(rendered_text, icon .. " " .. match.name .. " " .. match.path)
-        table.insert(rendered_icons, { icon = icon, hl_name = hl_name})
+        if match.is_loading or match.no_matches then
+            table.insert(rendered_text, match.name)
+            table.insert(rendered_icons, nil)
+        else
+            local ext = match.name:match("%.([^%.]+)$") or ""
+            local icon, hl_name = require("nvim-web-devicons").get_icon(match.name, ext, { default = true })
+            table.insert(rendered_text, icon .. " " .. match.name .. " " .. match.path)
+            table.insert(rendered_icons, { icon = icon, hl_name = hl_name})
+        end
     end
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, rendered_text)
     for i, match in ipairs(lines) do
-        local line_row = i - 1
-        local icon_params = rendered_icons[i]
-        local icon = icon_params.icon
-        local icon_hl = icon_params.hl_name
+        if not match.is_loading and not match.no_matches then
+            local line_row = i - 1
+            local icon_params = rendered_icons[i]
+            local icon = icon_params.icon
+            local icon_hl = icon_params.hl_name
 
-        vim.api.nvim_buf_set_extmark(buf, M.ns, line_row, 0, {
-            hl_group = icon_hl,
-            end_col =  #icon
-        })
-        local path_beg = #icon + 1 + #match.name + 1;
-        local path_end = path_beg + #match.path;
-        vim.api.nvim_buf_set_extmark(buf, M.ns, line_row, path_beg, {
-            hl_group = 'Whitespace',
-            end_col = path_end
-        })
+            vim.api.nvim_buf_set_extmark(buf, M.ns, line_row, 0, {
+                hl_group = icon_hl,
+                end_col =  #icon
+            })
+            local path_beg = #icon + 1 + #match.name + 1;
+            local path_end = path_beg + #match.path;
+            vim.api.nvim_buf_set_extmark(buf, M.ns, line_row, path_beg, {
+                hl_group = 'Whitespace',
+                end_col = path_end
+            })
+        end
     end
 end
 
@@ -103,12 +112,12 @@ M.update_display_window = function ()
     M.display_selected = M.selected - M.display_window_ind + 1
 end
 
-M.update = function (input_event)
+M.update = function (reset_selection)
     local data = M.data_callback(M.input)
     M.matches = data.items
     if #M.matches == 0 then
         M.selected = 0
-    elseif input_event then
+    elseif reset_selection then
         M.selected = 1
     end
 
@@ -122,11 +131,13 @@ M.update = function (input_event)
         table.insert(lines, M.matches[i])
     end
     if #M.matches == 0 then
-        local no_matches = "No matches"
         if data.scan_in_progress then
-            no_matches = "Scanning " .. data.scanned_items_count .. " ..."
+            local scanning = "Scanning " .. data.scanned_items_count .. " ..."
+            table.insert(lines, { name = scanning, path = "", is_loading = true })
+        else
+            local no_matches = "No matches"
+            table.insert(lines, { name = no_matches, path = "", no_matches = true })
         end
-        table.insert(lines, { name = no_matches, path = "" })
     end
     M.draw_lines(M.list_buf, lines)
 
@@ -136,6 +147,30 @@ M.update = function (input_event)
             end_row = M.display_selected,
             hl_eol = true,
         })
+    end
+
+    if data.scan_in_progress then
+        M.start_refresh_timer()
+    else
+        M.stop_refresh_timer()
+    end
+end
+
+M.start_refresh_timer = function ()
+    if M.timer then
+        return
+    end
+    M.timer = vim.loop.new_timer()
+    M.timer:start(0, 300, vim.schedule_wrap(function()
+        M.update(true)
+    end))
+end
+
+M.stop_refresh_timer = function ()
+    if M.timer then
+        M.timer:stop()
+        M.timer:close()
+        M.timer = nil
     end
 end
 
