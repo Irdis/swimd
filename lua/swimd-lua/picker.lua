@@ -26,7 +26,7 @@ M.open = function(title, data_callback)
     local win_cols = math.max(math.floor(frame_cols * .8), 20)
     local win_rows = math.max(math.floor(frame_rows * .8), 20)
 
-    M.ns = vim.api.nvim_create_namespace('my_highlight')
+    M.ns = vim.api.nvim_create_namespace('swimd_highlight')
 
     M.input_buf = vim.api.nvim_create_buf(false, true)
     M.list_buf = vim.api.nvim_create_buf(false, true)
@@ -38,8 +38,9 @@ M.open = function(title, data_callback)
         relative = 'editor', width = win_cols, height = 1,
         row = origin_row, col = origin_col,
         style = 'minimal', border = "rounded",
-        title = 'swimd ' .. title, title_pos = "center"
+        title = M.title_decorate('   swimd ' .. title .. ' '), title_pos = "center"
     })
+    vim.api.nvim_win_set_option(M.input_win, 'winhl', 'Normal:Normal')
 
     M.display_window_size = win_rows - 1
     M.list_win = vim.api.nvim_open_win(M.list_buf, false, {
@@ -47,6 +48,7 @@ M.open = function(title, data_callback)
         row = origin_row + 2, col = origin_col,
         style = 'minimal', border = "rounded"
     })
+    vim.api.nvim_win_set_option(M.list_win, 'winhl', 'Normal:Normal')
 
     vim.api.nvim_buf_set_option(M.input_buf, 'buftype', 'acwrite')
     vim.api.nvim_win_set_option(M.list_win, 'wrap', false)
@@ -57,6 +59,12 @@ M.open = function(title, data_callback)
     vim.api.nvim_win_set_cursor(M.input_win, {1, 0})
     M.update(false)
     vim.cmd.startinsert()
+end
+
+M.title_decorate = function (title)
+    local res = {}
+    table.insert(res, { title, "Title" })
+    return res
 end
 
 M.draw_lines = function (buf, lines)
