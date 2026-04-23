@@ -170,6 +170,10 @@ M.start_refresh_timer = function ()
     end
     M.timer = vim.loop.new_timer()
     M.timer:start(0, 300, vim.schedule_wrap(function()
+        if not vim.api.nvim_win_is_valid(M.input_win) then -- closed
+            M.stop_refresh_timer()
+            return
+        end
         M.update(true)
     end))
 end
