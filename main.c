@@ -462,7 +462,7 @@ static void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
 #endif
 
 #ifdef DEBUG_PRINT
-    printf("%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
+    printf("%04d-%02d-%02dT%02d:%02d:%02d.%09ld ",
         t.tm_year+1900,
         t.tm_mon+1,
         t.tm_mday,
@@ -474,7 +474,7 @@ static void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
     printf("[%s] ", level_str);
 #endif
 
-    fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09d ",
+    fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09ld ",
         t.tm_year+1900,
         t.tm_mon+1,
         t.tm_mday,
@@ -1243,10 +1243,10 @@ static void swimd_simd_haystack_scores(short *d,
         int file_index = haystack_index * LANES_COUNT_SHORT + i;
         if (file_index >= files->length)
             break;
-        char *file_name = files->arr[file_index].name;
         int file_name_length = files->arr[file_index].name_length;
         scores[file_index] = d[D_IND(needle_length, file_name_length) + i];
 #ifdef DEBUG_PRINT
+        // char *file_name = files->arr[file_index].name;
         // swimd_vec_estimate_diagnostic(d,
         //         i,
         //         needle,
@@ -1930,26 +1930,35 @@ static int swimd_lua_refresh_workspace(lua_State *L) {
 
 static int swimd_lua_is_refreshing(lua_State *L) {
     swimd_log_append(SWIMD_INFO, "Quering refresh status");
+    lua_newtable(L);
 
-    bool refreshing = false;
-    int refresh_count = INT_MAX;
+    lua_pushstring(L, "details");
+    lua_newtable(L);
+    bool is_refreshing = false;
     for (int i = 0; i < SCANNER_COUNT; i++) {
         int scanner_refresh_count;
         bool scanner_refreshing = swimd_scan_is_refreshing(&swimd_scanners[i], &scanner_refresh_count);
-        if (scanner_refreshing) {
-            refreshing = true;
-            refresh_count = MIN(refresh_count, scanner_refresh_count);
-        }
+        is_refreshing |= scanner_refreshing;
+
+        lua_pushnumber(L, i + 1);
+
+        lua_newtable(L);
+
+        lua_pushstring(L, "refreshing");
+        lua_pushboolean(L, scanner_refreshing);
+        lua_settable(L, -3);
+
+        lua_pushstring(L, "count");
+        lua_pushinteger(L, scanner_refresh_count);
+        lua_settable(L, -3);
+
+        lua_settable(L, -3);
+
     }
-
-    lua_newtable(L);
-
-    lua_pushstring(L, "refreshing");
-    lua_pushboolean(L, refreshing);
     lua_settable(L, -3);
 
-    lua_pushstring(L, "refresh_count");
-    lua_pushinteger(L, refresh_count);
+    lua_pushstring(L, "refreshing");
+    lua_pushboolean(L, is_refreshing);
     lua_settable(L, -3);
 
     swimd_log_append(SWIMD_INFO, "Refresh status received");

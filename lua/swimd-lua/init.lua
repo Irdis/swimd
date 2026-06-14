@@ -109,13 +109,31 @@ M.start_refresh_timer = function ()
     M.timer:start(0, 300, vim.schedule_wrap(function()
         local swimd = require("swimd")
         local res = swimd.is_refreshing()
+
+        local git_details = M.print_details("git", res.details[swimd.SCANNER_GIT + 1])
+        local files_details = M.print_details("files", res.details[swimd.SCANNER_FILES + 1])
+        local details = "[" .. git_details .. ", " .. files_details .. "]"
+
         if res.refreshing then
-            M.log("refreshing ".. res.refresh_count .."...")
+            M.log("refreshing " .. details)
         else
-            M.log("refresh completed")
+            M.log("refresh completed " .. details)
             M.stop_refresh_timer()
         end
     end))
+end
+
+M.print_details = function (scanner_name, status_details)
+    local res = ""
+    res = res .. scanner_name .. ": "
+    res = res .. status_details.count
+
+    if status_details.refreshing then
+        res = res .. " refreshing"
+    else
+        res = res .. " completed"
+    end
+    return res
 end
 
 M.stop_refresh_timer = function ()
@@ -137,7 +155,6 @@ M.open_picker_git = function ()
     local picker = require("swimd-lua/picker")
     picker.open("git", M.create_data_callback(swimd.SCANNER_GIT))
 end
-
 
 M.is_linux = function ()
     local os_name = vim.loop.os_uname().sysname
