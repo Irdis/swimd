@@ -1708,7 +1708,13 @@ static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) 
 
 static bool swimd_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
     bool res = scanner->scan_in_progress;
-    *read_count = scanner->scan_files_refresh_count;
+    if (!scanner->scan_is_refreshing) { 
+        // maybe refresh was called before we completed initial setup. 
+        // let's just show ititial scan progress
+        *read_count = scanner->scan_files_count;
+    } else {
+        *read_count = scanner->scan_files_refresh_count;
+    }
     return res;
 }
 
