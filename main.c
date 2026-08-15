@@ -18,6 +18,9 @@
 #include "lauxlib.h"
 #include "git2.h"
 
+#include "swimd_thread.h"
+#include "swimd_log.h"
+
 #define NOB_IMPLEMENTATION
 #undef ERROR
 #include "nob.h"
@@ -72,180 +75,6 @@ static int GAP_PENALTY[][2] = {
         b = temp;        \
     } while (0)
 
-#ifdef _WIN32
-typedef DWORD (*swimd_thread_callback)(LPVOID);
-
-static void swimd_thread_create(HANDLE *t, swimd_thread_callback callback) {
-    *t = CreateThread(NULL, 0, callback, NULL, 0, NULL);
-}
-
-static void swimd_thread_join(HANDLE *t) {
-    WaitForSingleObject(*t, INFINITE);
-}
-
-static void swimd_thread_close(HANDLE *t) {
-    CloseHandle(*t);
-}
-
-static void swimd_crit_init(CRITICAL_SECTION *lock) {
-    InitializeCriticalSection(lock);
-}
-
-static void swimd_crit_lock(CRITICAL_SECTION *lock) {
-    EnterCriticalSection(lock);
-}
-
-static void swimd_crit_unlock(CRITICAL_SECTION *lock) {
-    LeaveCriticalSection(lock);
-}
-
-static void swimd_crit_close(CRITICAL_SECTION *lock) {
-    DeleteCriticalSection(lock);
-}
-
-static void swimd_are_init(HANDLE *ev, bool initial_state) {
-    *ev = CreateEvent(NULL, false, initial_state, NULL);
-}
-
-static void swimd_are_wait(HANDLE *ev) {
-    WaitForSingleObject(*ev, INFINITE);
-}
-
-static void swimd_are_set(HANDLE *ev) {
-    SetEvent(*ev);
-}
-
-static void swimd_are_close(HANDLE *ev) {
-    CloseHandle(*ev);
-}
-
-static void swimd_mre_init(HANDLE *ev, bool initial_state) {
-    *ev = CreateEvent(NULL, true, initial_state, NULL);
-}
-
-static void swimd_mre_wait(HANDLE *ev) {
-    WaitForSingleObject(*ev, INFINITE);
-}
-
-static void swimd_mre_set(HANDLE *ev) {
-    SetEvent(*ev);
-}
-
-static void swimd_mre_reset(HANDLE *ev) {
-    ResetEvent(*ev);
-}
-
-static void swimd_mre_close(HANDLE *ev) {
-    CloseHandle(*ev);
-}
-#else
-typedef void* (*swimd_thread_callback)(void*);
-
-static void swimd_thread_create(pthread_t *t, swimd_thread_callback callback) {
-    pthread_create(t, NULL, callback, NULL);
-}
-
-static void swimd_thread_join(pthread_t *t) {
-   pthread_join(*t, NULL);
-}
-
-static void swimd_thread_close(pthread_t *t) {
-}
-
-static void swimd_crit_init(pthread_mutex_t *lock) {
-    pthread_mutex_init(lock, NULL);
-}
-
-static void swimd_crit_lock(pthread_mutex_t *lock) {
-    pthread_mutex_lock(lock);
-}
-
-static void swimd_crit_unlock(pthread_mutex_t *lock) {
-    pthread_mutex_unlock(lock);
-}
-
-static void swimd_crit_close(pthread_mutex_t *lock) {
-    pthread_mutex_destroy(lock);
-}
-
-typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t condition;
-    bool signaled;
-} SwimdAutoResetEvent;
-
-static void swimd_are_init(SwimdAutoResetEvent *ev, bool initial_state) {
-    pthread_mutex_init(&ev->mutex, NULL);
-    pthread_cond_init(&ev->condition, NULL);
-    ev->signaled = initial_state;
-}
-
-static void swimd_are_wait(SwimdAutoResetEvent *ev) {
-    pthread_mutex_lock(&ev->mutex);
-    while (!ev->signaled) {
-        pthread_cond_wait(&ev->condition, &ev->mutex);
-    }
-    ev->signaled = false;
-    pthread_mutex_unlock(&ev->mutex);
-}
-
-static void swimd_are_set(SwimdAutoResetEvent *ev) {
-    pthread_mutex_lock(&ev->mutex);
-    ev->signaled = true;
-    pthread_mutex_unlock(&ev->mutex);
-    pthread_cond_signal(&ev->condition);
-}
-
-static void swimd_are_close(SwimdAutoResetEvent *ev) {
-    pthread_mutex_destroy(&ev->mutex);
-    pthread_cond_destroy(&ev->condition);
-}
-
-typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t condition;
-    bool signaled;
-} SwimdManualResetEvent;
-
-static void swimd_mre_init(SwimdManualResetEvent *ev, bool initial_state) {
-    pthread_mutex_init(&ev->mutex, NULL);
-    pthread_cond_init(&ev->condition, NULL);
-    ev->signaled = initial_state;
-}
-
-static void swimd_mre_wait(SwimdManualResetEvent *ev) {
-    pthread_mutex_lock(&ev->mutex);
-    while (!ev->signaled) {
-        pthread_cond_wait(&ev->condition, &ev->mutex);
-    }
-    pthread_mutex_unlock(&ev->mutex);
-}
-
-static void swimd_mre_set(SwimdManualResetEvent *ev) {
-    pthread_mutex_lock(&ev->mutex);
-    ev->signaled = true;
-    pthread_cond_broadcast(&ev->condition);
-    pthread_mutex_unlock(&ev->mutex);
-}
-
-static void swimd_mre_reset(SwimdManualResetEvent *ev) {
-    pthread_mutex_lock(&ev->mutex);
-    ev->signaled = false;
-    pthread_mutex_unlock(&ev->mutex);
-}
-
-static void swimd_mre_close(SwimdManualResetEvent *ev) {
-    pthread_mutex_destroy(&ev->mutex);
-    pthread_cond_destroy(&ev->condition);
-}
-#endif
-
-typedef enum {
-    SWIMD_INFO,
-    SWIMD_WARN,
-    SWIMD_ERR,
-    SWIMD_DEBUG,
-} SwimdLogLevel;
 
 typedef struct  {
     char *path;
@@ -378,23 +207,9 @@ static void* swimd_scanning_loop_files(void *lp_param);
 
 static bool swimd_initialized = false;
 static SwimdScanner swimd_scanners[SCANNER_COUNT] = {0};
-static FILE *swimd_log = {0};
-static bool swimd_log_enabled = false;
 
 static void swimd_git2_init(void) {
     git_libgit2_init();
-}
-
-static void swimd_log_init(const char *log_path) {
-    if (log_path == NULL) {
-        return;
-    }
-    swimd_log_enabled = true;
-    swimd_log = fopen(log_path, "a");
-    if (swimd_log == NULL) {
-        fprintf(stderr, "Unable to init log file");
-        exit(1);
-    }
 }
 
 static void swimd_scanner_init_git(void) {
@@ -414,14 +229,6 @@ static void swimd_global_init(const char *log_path) {
     swimd_scanner_init_files();
 }
 
-static void swimd_log_free(void) {
-    if (!swimd_log_enabled) {
-        return;
-    }
-    swimd_log_enabled = false;
-    fclose(swimd_log);
-}
-
 static void swimd_git2_free(void) {
     git_libgit2_shutdown();
 }
@@ -429,79 +236,6 @@ static void swimd_git2_free(void) {
 static void swimd_global_free(void) {
     swimd_git2_free();
     swimd_log_free();
-}
-
-static void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
-    if (!swimd_log_enabled) {
-        return;
-    }
-    const char *level_str;
-    switch (level) {
-        case SWIMD_INFO:
-            level_str = "INFO";
-            break;
-        case SWIMD_WARN:
-            level_str = "WARN";
-            break;
-        case SWIMD_ERR:
-            level_str = "ERR";
-            break;
-        case SWIMD_DEBUG:
-            level_str = "DEBUG";
-            break;
-    }
-    struct timespec ts;
-    timespec_get(&ts, TIME_UTC);
-    time_t seconds = ts.tv_sec;
-
-    struct tm t;
-#ifdef _WIN32
-    localtime_s(&t, &seconds);
-#else
-    localtime_r(&seconds, &t);
-#endif
-
-#ifdef DEBUG_PRINT
-    printf("%04d-%02d-%02dT%02d:%02d:%02d.%09ld ",
-        t.tm_year+1900,
-        t.tm_mon+1,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec,
-        ts.tv_nsec
-    );
-    printf("[%s] ", level_str);
-#endif
-
-    fprintf(swimd_log, "%04d-%02d-%02dT%02d:%02d:%02d.%09ld ",
-        t.tm_year+1900,
-        t.tm_mon+1,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec,
-        ts.tv_nsec
-    );
-    fprintf(swimd_log, "[%s] ", level_str);
-
-    va_list args;
-    va_start(args, msg);
-
-#ifdef DEBUG_PRINT
-    va_list args_copy;
-    va_copy(args_copy, args);
-    vprintf(msg, args_copy);
-    va_end(args_copy);
-#endif
-    vfprintf(swimd_log, msg, args);
-    va_end(args);
-
-#ifdef DEBUG_PRINT
-    printf("\n");
-#endif
-    fprintf(swimd_log, "\n");
-    fflush(swimd_log);
 }
 
 static void swimd_folders_init(SwimdFolderStructList *lst) {
@@ -1708,8 +1442,8 @@ static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) 
 
 static bool swimd_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
     bool res = scanner->scan_in_progress;
-    if (!scanner->scan_is_refreshing) { 
-        // maybe refresh was called before we completed initial setup. 
+    if (!scanner->scan_is_refreshing) {
+        // maybe refresh was called before we completed initial setup.
         // let's just show ititial scan progress
         *read_count = scanner->scan_files_count;
     } else {

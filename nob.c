@@ -8,7 +8,8 @@
     "-I", "libgit2\\include"
 #define MSVC_LINKS \
     "-LIBPATH:\"lualib\"", "lua51.lib", \
-    "-LIBPATH:\"libgit2\"", "git2.lib"
+    "-LIBPATH:\"libgit2\"", "git2.lib", \
+    "build\\swimd_thread.obj", "build\\swimd_log.obj"
 
 #define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
 #define CC_INCLUDES \
@@ -16,7 +17,8 @@
     "-Ilibgit2/include"
 #define CC_LINKS  \
     "-llua5.1", \
-    "-Lbuild", "-lgit2"
+    "-Lbuild", "-lgit2", \
+    "build/swimd_thread.o", "build/swimd_log.o"
 
 int main(int argc, char **argv)
 {
@@ -28,6 +30,22 @@ int main(int argc, char **argv)
     if (!nob_copy_file("libgit2/libgit2.so", "build/libgit2.so")) return 1;
 
     Nob_Cmd cmd = {0};
+
+    nob_cmd_append(&cmd, "cc");
+    nob_cmd_append(&cmd, "-Wall", "-Wextra");
+    nob_cmd_append(&cmd, "-Wno-unused-function");
+    nob_cmd_append(&cmd, "-fPIC");
+    nob_cmd_append(&cmd, "-c", "swimd_log.c");
+    nob_cmd_append(&cmd, "-o", "build/swimd_log.o");
+    if (!nob_cmd_run(&cmd)) return 1;
+
+    nob_cmd_append(&cmd, "cc");
+    nob_cmd_append(&cmd, "-Wall", "-Wextra");
+    nob_cmd_append(&cmd, "-Wno-unused-function");
+    nob_cmd_append(&cmd, "-fPIC");
+    nob_cmd_append(&cmd, "-c", "swimd_thread.c");
+    nob_cmd_append(&cmd, "-o", "build/swimd_thread.o");
+    if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");
     nob_cmd_append(&cmd, "-shared", "-fPIC");
@@ -50,6 +68,16 @@ int main(int argc, char **argv)
     if (!nob_copy_file("libgit2\\git2.dll", "build\\git2.dll")) return 1;
 
     Nob_Cmd cmd = {0};
+
+    nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, "/c", "swimd_log.c");
+    nob_cmd_append(&cmd, "/Fo:build\\swimd_log.obj");
+    if (!nob_cmd_run(&cmd)) return 1;
+
+    nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, "/c", "swimd_thread.c");
+    nob_cmd_append(&cmd, "/Fo:build\\swimd_thread.obj");
+    if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
     nob_cmd_append(&cmd, "main.c");
