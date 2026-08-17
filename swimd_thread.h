@@ -7,6 +7,7 @@
     #include <pthread.h>
     #include <dirent.h>
 #endif
+#include <stdbool.h>
 
 #ifdef _WIN32
 

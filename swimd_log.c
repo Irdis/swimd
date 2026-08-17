@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 static FILE *swimd_log = {0};
 static bool swimd_log_enabled = false;
