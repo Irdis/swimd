@@ -20,6 +20,7 @@
 
 #include "swimd_thread.h"
 #include "swimd_log.h"
+#include "swimd_watch.h"
 
 #define NOB_IMPLEMENTATION
 #undef ERROR
@@ -1305,7 +1306,7 @@ static void swimd_scan_thread_init(SwimdScanner *scanner) {
     swimd_are_init(&scanner->scan_started, false);
     swimd_mre_init(&scanner->scan_finished, true);
 
-    swimd_thread_create(&scanner->scan_thread, scanner->scanning_loop);
+    swimd_thread_create(&scanner->scan_thread, scanner->scanning_loop, NULL);
 
     swimd_crit_init(&scanner->scan_state_swap);
 }
@@ -1867,9 +1868,56 @@ static void swimd_scenario_scanning(void) {
     printf("Over\n");
 }
 
+static int counter = 0;
+
+static void swimd_watch_demo_callback(bool *ignore, SwimdWatchOwner *owner) {
+    *ignore = true;
+    counter++;
+    if (counter == 3) {
+        *ignore = false;
+        swimd_are_set(&owner->notification_are_raised);
+    } else {
+        printf("event ignored\n");
+    }
+}
+
+void swimd_watch_owner_notification_demo_handler(SwimdWatchOwner *owner) {
+    swimd_watch_end_tracking(owner);
+    owner->watch_terminated = true;
+}
+
+int swimd_scenario_watch() {
+    swimd_log_init("watch.log");
+    SwimdWatchOwner owner = {0};
+
+    swimd_watch_owner_init(&owner);
+    swimd_watch_owner_begin_waiting(&owner,
+            swimd_watch_owner_notification_demo_handler);
+
+    if (!swimd_watch_init(&owner)) {
+        goto cleanup;
+    }
+    if (!swimd_watch_track_path(&owner,
+                "/home/ivan/Projects/experiments")) {
+        goto cleanup;
+    }
+
+    swimd_watch_begin_tracking(&owner,
+            swimd_watch_demo_callback);
+
+    getchar();
+
+cleanup:
+    swimd_watch_owner_end(&owner);
+
+    swimd_log_free();
+    return 0;
+}
+
 int main() {
-    swimd_scenario_scanning();
+    // swimd_scenario_scanning();
     // swimd_scenario_setup_path();
+    swimd_scenario_watch();
 
     return 0;
 }

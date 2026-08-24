@@ -18,7 +18,9 @@
 #define CC_LINKS  \
     "-llua5.1", \
     "-Lbuild", "-lgit2", \
-    "build/swimd_thread.o", "build/swimd_log.o"
+    "build/swimd_thread.o", \
+    "build/swimd_log.o", \
+    "build/swimd_watch.o"
 
 int main(int argc, char **argv)
 {
@@ -45,6 +47,14 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, "-fPIC");
     nob_cmd_append(&cmd, "-c", "swimd_thread.c");
     nob_cmd_append(&cmd, "-o", "build/swimd_thread.o");
+    if (!nob_cmd_run(&cmd)) return 1;
+
+    nob_cmd_append(&cmd, "cc");
+    nob_cmd_append(&cmd, "-Wall", "-Wextra");
+    nob_cmd_append(&cmd, "-Wno-unused-function");
+    nob_cmd_append(&cmd, "-fPIC");
+    nob_cmd_append(&cmd, "-c", "swimd_watch.c");
+    nob_cmd_append(&cmd, "-o", "build/swimd_watch.o");
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");

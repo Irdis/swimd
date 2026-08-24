@@ -11,7 +11,9 @@
 #ifdef _WIN32
 
 typedef DWORD (*swimd_thread_callback)(LPVOID);
-void swimd_thread_create(HANDLE *t, swimd_thread_callback callback);
+void swimd_thread_create(HANDLE *t,
+        swimd_thread_callback callback,
+        void *arg);
 void swimd_thread_join(HANDLE *t);
 void swimd_thread_close(HANDLE *t);
 
@@ -35,7 +37,9 @@ void swimd_mre_close(HANDLE *ev);
 
 typedef void* (*swimd_thread_callback)(void*);
 
-void swimd_thread_create(pthread_t *t, swimd_thread_callback callback);
+void swimd_thread_create(pthread_t *t,
+        swimd_thread_callback callback,
+        void *arg);
 void swimd_thread_join(pthread_t *t);
 void swimd_thread_close(pthread_t *t);
 

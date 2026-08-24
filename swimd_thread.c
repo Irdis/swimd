@@ -2,8 +2,15 @@
 
 #ifdef _WIN32
 
-void swimd_thread_create(HANDLE *t, swimd_thread_callback callback) {
-    *t = CreateThread(NULL, 0, callback, NULL, 0, NULL);
+void swimd_thread_create(HANDLE *t,
+        swimd_thread_callback callback,
+        void *arg) {
+    *t = CreateThread(NULL,
+            0,
+            callback,
+            (LPVOID)arg,
+            0,
+            NULL);
 }
 
 void swimd_thread_join(HANDLE *t) {
@@ -68,8 +75,10 @@ void swimd_mre_close(HANDLE *ev) {
 #else
 typedef void* (*swimd_thread_callback)(void*);
 
-void swimd_thread_create(pthread_t *t, swimd_thread_callback callback) {
-    pthread_create(t, NULL, callback, NULL);
+void swimd_thread_create(pthread_t *t,
+        swimd_thread_callback callback,
+        void *arg) {
+    pthread_create(t, NULL, callback, arg);
 }
 
 void swimd_thread_join(pthread_t *t) {
