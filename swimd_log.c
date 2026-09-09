@@ -1,4 +1,5 @@
 #include "swimd_log.h"
+#include "swimd_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,12 +9,20 @@
 static FILE *swimd_log = {0};
 static bool swimd_log_enabled = false;
 
+#ifdef _WIN32
+static CRITICAL_SECTION scan_log_lock;
+#else
+static pthread_mutex_t scan_log_lock;
+#endif
+
+
 void swimd_log_init(const char *log_path) {
     if (log_path == NULL) {
         return;
     }
     swimd_log_enabled = true;
     swimd_log = fopen(log_path, "a");
+    swimd_crit_init(&scan_log_lock);
     if (swimd_log == NULL) {
         fprintf(stderr, "Unable to init log file");
         exit(1);
@@ -24,6 +33,8 @@ void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
     if (!swimd_log_enabled) {
         return;
     }
+
+    swimd_crit_lock(&scan_log_lock);
     const char *level_str;
     switch (level) {
         case SWIMD_INFO:
@@ -91,6 +102,7 @@ void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
 #endif
     fprintf(swimd_log, "\n");
     fflush(swimd_log);
+    swimd_crit_unlock(&scan_log_lock);
 }
 
 void swimd_log_free(void) {
@@ -98,5 +110,6 @@ void swimd_log_free(void) {
         return;
     }
     swimd_log_enabled = false;
+    swimd_crit_close(&scan_log_lock);
     fclose(swimd_log);
 }

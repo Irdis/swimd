@@ -2,11 +2,15 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <poll.h>
-#include <errno.h>
 #include <time.h>
-#include <sys/eventfd.h>
-#include <sys/inotify.h>
+#include <errno.h>
+#ifdef _WIN32
+    // todo: win
+#else
+    #include <poll.h>
+    #include <sys/eventfd.h>
+    #include <sys/inotify.h>
+#endif
 #include "swimd_log.h"
 #include "swimd_thread.h"
 #include "swimd_watch.h"
@@ -14,6 +18,37 @@
 #define SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS 3000
 #define SWIMD_WATCH_SILENT_WINDOW_MS 3000
 #define SWIMD_WATCH_POLL_INTERVAL_MS 1000
+
+#ifdef _WIN32
+
+bool swimd_watch_init(SwimdWatchOwner *owner) {
+    //todo
+    return true;
+}
+bool swimd_watch_track_path(SwimdWatchOwner *owner, const char* path, bool root) {
+    //todo
+    return true;
+}
+bool swimd_watch_begin_tracking(SwimdWatchOwner *owner,
+        swimd_watch_callback callback) {
+    //todo
+    return true;
+}
+bool swimd_watch_end_tracking(SwimdWatchOwner *owner) {
+    //todo
+}
+void swimd_watch_owner_init(SwimdWatchOwner *owner) {
+    //todo
+}
+void swimd_watch_owner_begin_waiting(SwimdWatchOwner *owner,
+        swimd_watch_notification_handler notification_handler) {
+    //todo
+}
+void swimd_watch_owner_end(SwimdWatchOwner *owner) {
+    //todo
+}
+
+#else
 
 typedef struct inotify_event inotify_event;
 static void* swimd_watch_watch_loop(void *arg);
@@ -27,6 +62,7 @@ static long long swimd_watch_get_current_time() {
 
 bool swimd_watch_init(SwimdWatchOwner *owner) {
     SwimdWatch *watch = malloc(sizeof(SwimdWatch));
+    owner->watch_terminated = false;
     owner->watch = watch;
 
     watch->handle = inotify_init1(IN_NONBLOCK);
@@ -51,7 +87,9 @@ bool swimd_watch_init(SwimdWatchOwner *owner) {
     return true;
 }
 
-bool swimd_watch_track_path(SwimdWatchOwner *owner, const char* path) {
+bool swimd_watch_track_path(SwimdWatchOwner *owner, const char* path, bool root) {
+    (void)root;
+
     SwimdWatch *watch = owner->watch;
     if (watch->handle == -1)
         return false;
@@ -102,6 +140,8 @@ bool swimd_watch_end_tracking(SwimdWatchOwner *owner) {
     close(watch->shutdown);
     swimd_thread_close(&watch->watch_loop);
 
+    watch->handle = -1;
+    watch->shutdown = -1;
 cleanup:
     free(watch);
     return true;
@@ -109,7 +149,7 @@ cleanup:
 
 static void* swimd_watch_watch_loop(void *arg) {
     SwimdWatchOwner *owner = (SwimdWatchOwner*)arg;
-    SwimdWatch* watch = owner->watch;
+    SwimdWatch *watch = owner->watch;
     swimd_log_append(SWIMD_INFO, "Watch loop start");
 
     const int fds_len = 2;
@@ -135,6 +175,9 @@ static void* swimd_watch_watch_loop(void *arg) {
             }
 
             if (watch->modification_occured) {
+
+                swimd_log_append(SWIMD_INFO, "modification_occured");
+
                 long long cur_time = swimd_watch_get_current_time();
                 if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
                     continue;
@@ -180,17 +223,23 @@ static void* swimd_watch_watch_loop(void *arg) {
 
 static void* swimd_watch_notification_loop(void *arg) {
     SwimdWatchOwner *owner = (SwimdWatchOwner*)arg;
-    swimd_are_wait(&owner->notification_are_raised);
+    while (1) {
+        swimd_are_wait(&owner->notification_are_raised);
+        if (owner->owner_terminating) {
+            break;
+        }
 
-    swimd_crit_lock(&owner->notification_lock);
-    if (!owner->watch_terminated) {
-        owner->notification_handler(owner);
+        swimd_crit_lock(&owner->notification_lock);
+        if (!owner->watch_terminated) {
+            owner->notification_handler(owner);
+        }
+        swimd_crit_unlock(&owner->notification_lock);
     }
-    swimd_crit_unlock(&owner->notification_lock);
     return NULL;
 }
 
 void swimd_watch_owner_init(SwimdWatchOwner *owner) {
+    owner->owner_terminating = false;
     swimd_crit_init(&owner->notification_lock);
     swimd_are_init(&owner->notification_are_raised, false);
 }
@@ -214,6 +263,7 @@ void swimd_watch_owner_end(SwimdWatchOwner *owner) {
 
     swimd_crit_unlock(&owner->notification_lock);
 
+    owner->owner_terminating = true;
     swimd_are_set(&owner->notification_are_raised);
     swimd_thread_join(&owner->notification_thread);
 
@@ -221,3 +271,4 @@ void swimd_watch_owner_end(SwimdWatchOwner *owner) {
     swimd_are_close(&owner->notification_are_raised);
     swimd_thread_close(&owner->notification_thread);
 }
+#endif //_WIN32
