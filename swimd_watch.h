@@ -40,6 +40,8 @@ typedef struct SwimdWatchOwner {
 #endif
 
     swimd_watch_notification_handler notification_handler;
+
+    bool has_watch;
     SwimdWatch *watch;
     void *argument;
 } SwimdWatchOwner;

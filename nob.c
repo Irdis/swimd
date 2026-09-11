@@ -1,7 +1,7 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
-#define DEBUG_PRINT 1
+// #define DEBUG_PRINT 1
 
 #define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI"
 #define MSVC_LFLAGS "-DEBUG"
@@ -13,8 +13,8 @@
     "-LIBPATH:\"libgit2\"", "git2.lib", \
     "build\\swimd_thread.obj", "build\\swimd_log.obj"
 
-#define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
-// #define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
+// #define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
+#define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
 #define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC"
 
 #define CC_INCLUDES \

@@ -1549,8 +1549,10 @@ static void swimd_scanners_watch_end_tracking(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
         SwimdScanner *scanner = &swimd_scanners[i];
         SwimdWatchOwner *scanner_owner = scanner->watch_owner;
-        swimd_watch_end_tracking(scanner_owner);
-        scanner_owner->watch_terminated = true;
+        if (scanner_owner->has_watch) {
+            swimd_watch_end_tracking(scanner_owner);
+            scanner_owner->watch_terminated = true;
+        }
     }
 }
 
@@ -1770,6 +1772,7 @@ static int swimd_lua_setup_workspace(lua_State *L) {
     const char *workspace = luaL_checkstring(L, 1);
 
     swimd_log_append(SWIMD_INFO, "Setting up workspace path %s", workspace);
+
     swimd_crit_lock(&swimd_scanners_request_lock);
 
     swimd_scanners_watch_end_tracking();

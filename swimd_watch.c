@@ -64,6 +64,7 @@ bool swimd_watch_init(SwimdWatchOwner *owner) {
     SwimdWatch *watch = malloc(sizeof(SwimdWatch));
     owner->watch_terminated = false;
     owner->watch = watch;
+    owner->has_watch = true;
 
     watch->handle = inotify_init1(IN_NONBLOCK);
     if (watch->handle == -1) {
@@ -144,6 +145,7 @@ bool swimd_watch_end_tracking(SwimdWatchOwner *owner) {
     watch->shutdown = -1;
 cleanup:
     free(watch);
+    owner->has_watch = false;
     return true;
 }
 
@@ -240,6 +242,7 @@ static void* swimd_watch_notification_loop(void *arg) {
 
 void swimd_watch_owner_init(SwimdWatchOwner *owner) {
     owner->owner_terminating = false;
+    owner->has_watch = false;
     swimd_crit_init(&owner->notification_lock);
     swimd_are_init(&owner->notification_are_raised, false);
 }
