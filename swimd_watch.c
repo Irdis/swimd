@@ -19,33 +19,181 @@
 #define SWIMD_WATCH_SILENT_WINDOW_MS 3000
 #define SWIMD_WATCH_POLL_INTERVAL_MS 1000
 
+#ifndef _WIN32
+#define INVALID_HANDLE_VALUE -1
+#endif
+
+void swimd_watch_notification_loop_impl(void *arg);
+
 #ifdef _WIN32
 
+static long long swimd_watch_get_current_time()
+{
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+
+    ULARGE_INTEGER time;
+    time.LowPart = ft.dwLowDateTime;
+    time.HighPart = ft.dwHighDateTime;
+
+    return (long long)(time.QuadPart / 10000);
+}
+
 bool swimd_watch_init(SwimdWatchOwner *owner) {
-    //todo
+    SwimdWatch *watch = malloc(sizeof(SwimdWatch));
+    owner->watch_terminated = false;
+    owner->watch = watch;
+    owner->has_watch = true;
+
+    watch->handle = INVALID_HANDLE_VALUE;
+    watch->shutdown = INVALID_HANDLE_VALUE;
+
+    watch->modification_occured = false;
+    watch->modification_time_ms = 0;
+    watch->init_time_ms = swimd_watch_get_current_time();
+    watch->modification_handled = false;
+
     return true;
 }
+
 bool swimd_watch_track_path(SwimdWatchOwner *owner, const char* path, bool root) {
-    //todo
+    if (!root) {
+        return true;
+    }
+    SwimdWatch *watch = owner->watch;
+    watch->handle = CreateFileA(
+            path,
+            FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+            NULL);
+
+    if (watch->handle == INVALID_HANDLE_VALUE) {
+        swimd_log_append(SWIMD_ERR, "Unable to initialize watch handle CreateFileA");
+        return false;
+    }
+    watch->shutdown = CreateEventW(NULL, true, false, NULL);
+    if (watch->shutdown == INVALID_HANDLE_VALUE) {
+        CloseHandle(watch->handle);
+        watch->handle = INVALID_HANDLE_VALUE;
+        swimd_log_append(SWIMD_ERR, "Unable to initialize shutdown handle CreateEventW");
+        return false;
+    }
+
     return true;
 }
-bool swimd_watch_begin_tracking(SwimdWatchOwner *owner,
-        swimd_watch_callback callback) {
-    //todo
-    return true;
+
+static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
+    SwimdWatchOwner *owner = (SwimdWatchOwner*)arg;
+    SwimdWatch *watch = owner->watch;
+    swimd_log_append(SWIMD_INFO, "Watch loop start");
+
+    BYTE buffer[4 * 1024];
+    OVERLAPPED overlapped = {0};
+
+    overlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+
+    const int handles_count = 2;
+    HANDLE handles[] = {
+        overlapped.hEvent,
+        watch->shutdown
+    };
+
+    for (;;) {
+        ResetEvent(overlapped.hEvent);
+
+        BOOL ok = ReadDirectoryChangesW(
+            watch->handle,
+            buffer,
+            sizeof(buffer),
+            TRUE, // recursive
+            FILE_NOTIFY_CHANGE_FILE_NAME |
+            FILE_NOTIFY_CHANGE_DIR_NAME,
+            NULL,
+            &overlapped,
+            NULL
+        );
+
+        if (!ok) {
+            swimd_log_append(SWIMD_ERR, "ReadDirectoryChangesW failed: %lu\n", GetLastError());
+            break;
+        }
+
+        DWORD result = WaitForMultipleObjects(
+            handles_count,
+            handles,
+            FALSE,
+            SWIMD_WATCH_POLL_INTERVAL_MS
+        );
+
+        if (result == WAIT_TIMEOUT) {
+            if (watch->modification_handled) {
+                continue; // waiting for shutdown
+            }
+
+            if (watch->modification_occured) {
+
+                long long cur_time = swimd_watch_get_current_time();
+                if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
+                    continue;
+                }
+                bool ignore = false;
+                watch->callback(&ignore, owner);
+                if (ignore) {
+                    watch->modification_occured = false;
+                    watch->modification_time_ms = 0;
+                } else  {
+                    watch->modification_handled = true;
+                }
+            }
+            continue;
+        }
+
+        if (result == WAIT_OBJECT_0 + 1) { // shutdown
+            break;
+        }
+
+        if (watch->modification_handled) {
+            continue; // waiting for shutdown
+        }
+
+        if (result == WAIT_OBJECT_0) {
+            DWORD bytes;
+
+            if (!GetOverlappedResult(watch->handle,
+                        &overlapped, &bytes, FALSE)) {
+                swimd_log_append(SWIMD_ERR, "GetOverlappedResult failed: %lu\n", GetLastError());
+                break;
+            }
+
+            if (bytes <= 0) {
+                continue;
+            }
+
+            long long cur_time = swimd_watch_get_current_time();
+            if (cur_time - watch->init_time_ms < SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS) {
+                continue;
+            }
+            watch->modification_occured = true;
+            watch->modification_time_ms = cur_time;
+        }
+    }
+
+    CloseHandle(overlapped.hEvent);
+
+    swimd_log_append(SWIMD_INFO, "Watch loop ended");
+    return 0;
 }
-bool swimd_watch_end_tracking(SwimdWatchOwner *owner) {
-    //todo
+
+static DWORD WINAPI swimd_watch_notification_loop(LPVOID arg) {
+    swimd_watch_notification_loop_impl(arg);
+    return 0;
 }
-void swimd_watch_owner_init(SwimdWatchOwner *owner) {
-    //todo
-}
-void swimd_watch_owner_begin_waiting(SwimdWatchOwner *owner,
-        swimd_watch_notification_handler notification_handler) {
-    //todo
-}
-void swimd_watch_owner_end(SwimdWatchOwner *owner) {
-    //todo
+
+static void swimd_watch_send_shutdown(SwimdWatch *watch) {
+    SetEvent(watch->shutdown);
 }
 
 #else
@@ -110,43 +258,9 @@ bool swimd_watch_track_path(SwimdWatchOwner *owner, const char* path, bool root)
     return true;
 }
 
-bool swimd_watch_begin_tracking(SwimdWatchOwner *owner,
-        swimd_watch_callback callback) {
-    SwimdWatch *watch = owner->watch;
-
-    if (watch->handle == -1)
-        return false;
-
-    watch->callback = callback;
-    swimd_thread_create(&watch->watch_loop,
-            swimd_watch_watch_loop,
-            owner);
-
-    return true;
-}
-
 static void swimd_watch_send_shutdown(SwimdWatch *watch) {
     uint64_t value = 1;
     write(watch->shutdown, &value, sizeof(value));
-}
-
-bool swimd_watch_end_tracking(SwimdWatchOwner *owner) {
-    SwimdWatch *watch = owner->watch;
-    if (watch->handle == -1)
-        goto cleanup;
-    swimd_watch_send_shutdown(watch);
-    swimd_thread_join(&watch->watch_loop);
-
-    close(watch->handle);
-    close(watch->shutdown);
-    swimd_thread_close(&watch->watch_loop);
-
-    watch->handle = -1;
-    watch->shutdown = -1;
-cleanup:
-    free(watch);
-    owner->has_watch = false;
-    return true;
 }
 
 static void* swimd_watch_watch_loop(void *arg) {
@@ -178,8 +292,6 @@ static void* swimd_watch_watch_loop(void *arg) {
 
             if (watch->modification_occured) {
 
-                swimd_log_append(SWIMD_INFO, "modification_occured");
-
                 long long cur_time = swimd_watch_get_current_time();
                 if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
                     continue;
@@ -196,7 +308,7 @@ static void* swimd_watch_watch_loop(void *arg) {
             continue;
         }
 
-        if (fds[1].revents & POLLIN) {
+        if (fds[1].revents & POLLIN) { // shutdown
             uint64_t value;
             read(watch->shutdown, &value, sizeof(value));
             break;
@@ -224,6 +336,52 @@ static void* swimd_watch_watch_loop(void *arg) {
 }
 
 static void* swimd_watch_notification_loop(void *arg) {
+    swimd_watch_notification_loop_impl(arg);
+    return NULL;
+}
+
+#endif //_WIN32
+
+bool swimd_watch_begin_tracking(SwimdWatchOwner *owner,
+        swimd_watch_callback callback) {
+    SwimdWatch *watch = owner->watch;
+
+    if (watch->handle == INVALID_HANDLE_VALUE)
+        return false;
+
+    watch->callback = callback;
+    swimd_thread_create(&watch->watch_loop,
+            swimd_watch_watch_loop,
+            owner);
+
+    return true;
+}
+
+bool swimd_watch_end_tracking(SwimdWatchOwner *owner) {
+    SwimdWatch *watch = owner->watch;
+    if (watch->handle == INVALID_HANDLE_VALUE)
+        goto cleanup;
+    swimd_watch_send_shutdown(watch);
+    swimd_thread_join(&watch->watch_loop);
+
+#ifdef _WIN32
+    CloseHandle(watch->handle);
+    CloseHandle(watch->shutdown);
+#else
+    close(watch->handle);
+    close(watch->shutdown);
+#endif
+    swimd_thread_close(&watch->watch_loop);
+
+    watch->handle = INVALID_HANDLE_VALUE;
+    watch->shutdown = INVALID_HANDLE_VALUE;
+cleanup:
+    free(watch);
+    owner->has_watch = false;
+    return true;
+}
+
+static void swimd_watch_notification_loop_impl(void *arg) {
     SwimdWatchOwner *owner = (SwimdWatchOwner*)arg;
     while (1) {
         swimd_are_wait(&owner->notification_are_raised);
@@ -237,7 +395,6 @@ static void* swimd_watch_notification_loop(void *arg) {
         }
         swimd_crit_unlock(&owner->notification_lock);
     }
-    return NULL;
 }
 
 void swimd_watch_owner_init(SwimdWatchOwner *owner) {
@@ -274,4 +431,3 @@ void swimd_watch_owner_end(SwimdWatchOwner *owner) {
     swimd_are_close(&owner->notification_are_raised);
     swimd_thread_close(&owner->notification_thread);
 }
-#endif //_WIN32

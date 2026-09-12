@@ -10,6 +10,8 @@ typedef void (*swimd_watch_notification_handler)(SwimdWatchOwner *owner);
 
 typedef struct {
 #ifdef _WIN32
+    HANDLE handle;
+    HANDLE shutdown;
     HANDLE watch_loop;
 #else
     int handle;
@@ -31,7 +33,7 @@ typedef struct SwimdWatchOwner {
 
 #ifdef _WIN32
     HANDLE notification_thread;
-    HANDLE notification_lock;
+    CRITICAL_SECTION notification_lock;
     HANDLE notification_are_raised;
 #else
     pthread_t notification_thread;

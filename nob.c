@@ -1,9 +1,11 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
-// #define DEBUG_PRINT 1
+#define DEBUG_PRINT 1
 
 #define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI"
+#define MSVC_SUBMODULE_CFLAGS "-nologo"
+
 #define MSVC_LFLAGS "-DEBUG"
 #define MSVC_INCLUDES \
     "-I", "lualib\\include", \
@@ -13,8 +15,8 @@
     "-LIBPATH:\"libgit2\"", "git2.lib", \
     "build\\swimd_thread.obj", "build\\swimd_log.obj", "build\\swimd_watch.obj"
 
-// #define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
-#define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
+#define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
+// #define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
 #define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC"
 
 #define CC_INCLUDES \
@@ -90,18 +92,21 @@ int main(int argc, char **argv)
     Nob_Cmd cmd = {0};
 
     nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, MSVC_SUBMODULE_CFLAGS);
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, "/c", "swimd_log.c");
     nob_cmd_append(&cmd, "/Fo:build\\swimd_log.obj");
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, MSVC_SUBMODULE_CFLAGS);
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, "/c", "swimd_thread.c");
     nob_cmd_append(&cmd, "/Fo:build\\swimd_thread.obj");
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, MSVC_SUBMODULE_CFLAGS);
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, "/c", "swimd_watch.c");
     nob_cmd_append(&cmd, "/Fo:build\\swimd_watch.obj");

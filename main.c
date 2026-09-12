@@ -326,10 +326,13 @@ static void swimd_file_list_free(SwimdFileList *lst) {
 }
 
 #ifdef _WIN32
-static void swimd_list_files_win32(const char *root_dir,
+
+static void swimd_list_files_win32_rec(const char *root_dir,
         SwimdFileList *file_list,
         SwimdFolderStruct *root_folder,
-        bool refreshing) {
+        SwimdWatchOwner *watch_owner,
+        bool refreshing,
+        bool is_root) {
     SwimdScanner *scanner = &swimd_scanners[SCANNER_FILES];
     char root_mask[MAX_PATH_LENGTH];
     char inner_folder[MAX_PATH_LENGTH];
@@ -346,6 +349,7 @@ static void swimd_list_files_win32(const char *root_dir,
         swimd_log_append(SWIMD_ERR, "FindFirstFile failed (%lu)\n", GetLastError());
         return;
     }
+    swimd_watch_track_path(watch_owner, root_dir, is_root);
 
     while (1) {
         const char *current_file = find_file_data.cFileName;
@@ -370,7 +374,12 @@ static void swimd_list_files_win32(const char *root_dir,
                 strcat(inner_folder, "\\");
                 strcat(inner_folder, current_file);
 
-                swimd_list_files_win32(inner_folder, file_list, folder_node, refreshing);
+                swimd_list_files_win32_rec(inner_folder,
+                        file_list,
+                        folder_node,
+                        watch_owner,
+                        refreshing,
+                        false);
             }
         } else {
             char *file_name = malloc((current_file_len + 1) * sizeof(char));
@@ -406,6 +415,20 @@ static void swimd_list_files_win32(const char *root_dir,
 
     FindClose(h_find);
 }
+
+static void swimd_list_files_win32(const char *root_dir,
+        SwimdFileList *file_list,
+        SwimdFolderStruct *root_folder,
+        SwimdWatchOwner *watch_owner,
+        bool refreshing) {
+    swimd_list_files_win32_rec(root_dir,
+            file_list,
+            root_folder,
+            watch_owner,
+            refreshing,
+            true);
+}
+
 #else
 static void swimd_list_files_linux_rec(const char *root_dir,
         SwimdFileList *file_list,
@@ -504,6 +527,7 @@ static void swimd_list_files(const char *root_dir,
     swimd_list_files_win32(root_dir,
         file_list,
         root_folder,
+        watch_owner,
         refreshing);
 #else
     swimd_list_files_linux(root_dir,
@@ -1982,7 +2006,7 @@ static void swimd_scenario_scanning(void) {
 
         swimd_crit_lock(&swimd_scanners_request_lock);
 #ifdef _WIN32
-        swimd_scanners_setup_path("c:\\projects\\tmp_swimd");
+        swimd_scanners_setup_path("c:\\Projects\\experiments");
 #else
         swimd_scanners_setup_path("/home/ivan/Projects/tmp_swimd");
 #endif
@@ -1995,6 +2019,10 @@ static void swimd_scenario_scanning(void) {
             if (result.scan_in_progress) {
                 printf("Scanning %d\n", result.scanned_items_count);
             } else {
+                if (result.items_length == 0) {
+                    printf("nothing matches\n");
+                }
+
                 for (int i = 0; i < result.items_length; i++) {
                     SwimdProcessInputResultItem item = result.items[i];
 
@@ -2043,10 +2071,17 @@ int swimd_scenario_watch() {
     if (!swimd_watch_init(&owner)) {
         goto cleanup;
     }
+#ifndef _WIN32
     if (!swimd_watch_track_path(&owner,
                 "/home/ivan/Projects/experiments", true)) {
         goto cleanup;
     }
+#else
+    if (!swimd_watch_track_path(&owner,
+                "c:\\Projects\\experiments", true)) {
+        goto cleanup;
+    }
+#endif
 
     swimd_watch_begin_tracking(&owner,
             swimd_watch_demo_callback);
@@ -2061,8 +2096,8 @@ cleanup:
 }
 
 int main() {
-    // swimd_scenario_scanning();
-    swimd_scenario_reinit();
+    swimd_scenario_scanning();
+    // swimd_scenario_reinit();
     // swimd_scenario_watch();
 
     return 0;
