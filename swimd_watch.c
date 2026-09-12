@@ -23,7 +23,7 @@
 #define INVALID_HANDLE_VALUE -1
 #endif
 
-void swimd_watch_notification_loop_impl(void *arg);
+static void swimd_watch_notification_loop_impl(void *arg);
 
 #ifdef _WIN32
 
