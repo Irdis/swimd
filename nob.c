@@ -11,7 +11,7 @@
 #define MSVC_LINKS \
     "-LIBPATH:\"lualib\"", "lua51.lib", \
     "-LIBPATH:\"libgit2\"", "git2.lib", \
-    "build\\swimd_thread.obj", "build\\swimd_log.obj"
+    "build\\swimd_thread.obj", "build\\swimd_log.obj", "build\\swimd_watch.obj"
 
 // #define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
 #define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
@@ -99,6 +99,12 @@ int main(int argc, char **argv)
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, "/c", "swimd_thread.c");
     nob_cmd_append(&cmd, "/Fo:build\\swimd_thread.obj");
+    if (!nob_cmd_run(&cmd)) return 1;
+
+    nob_cmd_append(&cmd, "cl");
+    cmd_add_debug_print_ifdef(&cmd);
+    nob_cmd_append(&cmd, "/c", "swimd_watch.c");
+    nob_cmd_append(&cmd, "/Fo:build\\swimd_watch.obj");
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");

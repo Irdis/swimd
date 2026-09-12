@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
     #include <windows.h>
+    #include <stdbool.h>
 #else
     #include <pthread.h>
     #include <dirent.h>

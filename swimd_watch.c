@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <time.h>
@@ -7,6 +6,7 @@
 #ifdef _WIN32
     // todo: win
 #else
+    #include <unistd.h>
     #include <poll.h>
     #include <sys/eventfd.h>
     #include <sys/inotify.h>
