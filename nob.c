@@ -1,12 +1,19 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
+// #define DEBUG_MODE 1
+
+#ifdef DEBUG_MODE
 #define DEBUG_PRINT 1
+#endif // DEBUG_MODE
 
 #define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI"
 #define MSVC_SUBMODULE_CFLAGS "-nologo"
 
+#ifdef DEBUG_MODE
 #define MSVC_LFLAGS "-DEBUG"
+#endif // DEBUG_MODE
+
 #define MSVC_INCLUDES \
     "-I", "lualib\\include", \
     "-I", "libgit2\\include"
@@ -15,8 +22,12 @@
     "-LIBPATH:\"libgit2\"", "git2.lib", \
     "build\\swimd_thread.obj", "build\\swimd_log.obj", "build\\swimd_watch.obj"
 
+#ifdef DEBUG_MODE
+#define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
+#else // DEBUG_MODE
 #define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
-// #define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
+#endif // DEBUG_MODE
+
 #define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC"
 
 #define CC_INCLUDES \
@@ -32,7 +43,13 @@
 void cmd_add_debug_print_ifdef(Nob_Cmd *cmd) {
 #ifdef DEBUG_PRINT
     nob_cmd_append(cmd, "-DDEBUG_PRINT");
-#endif
+#endif // DEBUG_PRINT
+}
+
+void cmd_add_msvc_link_flags(Nob_Cmd *cmd) {
+#ifdef MSVC_LFLAGS
+    nob_cmd_append(cmd, MSVC_LFLAGS);
+#endif // DEBUG_PRINT
 }
 
 int main(int argc, char **argv)
@@ -122,7 +139,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, MSVC_LINKS);
 
     nob_cmd_append(&cmd, "-out:build\\swimd.dll");
-    nob_cmd_append(&cmd, MSVC_LFLAGS);
+    cmd_add_msvc_link_flags(&cmd);
 
     if (!nob_cmd_run(&cmd)) return 1;
 
@@ -136,7 +153,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, MSVC_LINKS);
 
     nob_cmd_append(&cmd, "-out:build\\swimd.exe");
-    nob_cmd_append(&cmd, MSVC_LFLAGS);
+    cmd_add_msvc_link_flags(&cmd);
 
     if (!nob_cmd_run(&cmd)) return 1;
 
