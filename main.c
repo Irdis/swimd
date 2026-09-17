@@ -1288,6 +1288,14 @@ static void swimd_scanner_free(SwimdScanner *scanner) {
 }
 
 static void swimd_watch_scanner_callback(bool *ignore, SwimdWatchOwner *owner) {
+    for (int i = 0; i < SCANNER_COUNT; i++) {
+        if (swimd_scanners[i].scan_in_progress) {
+            // scan running, don't latch as handled
+            *ignore = true;
+            return;
+        }
+    }
+
     *ignore = false;
     swimd_are_set(&owner->notification_are_raised);
 }
