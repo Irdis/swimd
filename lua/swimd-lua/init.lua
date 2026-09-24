@@ -171,13 +171,13 @@ M.i_feel_lucky = function (scanner_name, scanner, input)
 
     local res = swimd.process_input(input, 1, scanner)
     if res.scan_in_progress then
-        M.log("not so lucky, " .. scanner_name .. " scanning. comeback later...")
+        M.log("not so lucky. " .. scanner_name .. " is scanning, comeback later...")
         return
     end
 
     local first = res.items[1]
     if not first then
-        M.log("not so lucky, no matches")
+        M.log("not so lucky. no matches")
         return
     end
 
