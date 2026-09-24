@@ -171,7 +171,7 @@ M.i_feel_lucky = function (scanner_name, scanner, input)
 
     local res = swimd.process_input(input, 1, scanner)
     if res.scan_in_progress then
-        M.log("not so lucky, " .. scanner_name .. " scanning, comeback later")
+        M.log("not so lucky, " .. scanner_name .. " scanning. comeback later...")
         return
     end
 
