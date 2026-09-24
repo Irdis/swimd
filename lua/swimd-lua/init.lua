@@ -156,6 +156,38 @@ M.open_picker_git = function ()
     picker.open("git", M.create_data_callback(swimd.SCANNER_GIT))
 end
 
+M.i_feel_lucky_git = function (input)
+    local swimd = require("swimd")
+    M.i_feel_lucky("git", swimd.SCANNER_GIT, input)
+end
+
+M.i_feel_lucky_files = function (input)
+    local swimd = require("swimd")
+    M.i_feel_lucky("files", swimd.SCANNER_FILES, input)
+end
+
+M.i_feel_lucky = function (scanner_name, scanner, input)
+    local swimd = require("swimd")
+
+    local res = swimd.process_input(input, 1, scanner)
+    if res.scan_in_progress then
+        M.log("not so lucky, " .. scanner_name .. " scanning, comeback later")
+        return
+    end
+
+    local first = res.items[1]
+    if not first then
+        M.log("not so lucky, no matches")
+        return
+    end
+
+    if vim.fn.expand("%:p") == vim.fn.fnamemodify(first.path, ":p") then
+        M.log("already lucky")
+        return
+    end
+    vim.cmd('e ' .. vim.fn.fnameescape(first.path))
+end
+
 M.is_linux = function ()
     local os_name = vim.loop.os_uname().sysname
     return os_name == "Linux"
