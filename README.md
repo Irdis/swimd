@@ -1,6 +1,6 @@
 # SWIMD
 
-A fuzzy search Neovim plugin. It supports searching in git repositories and the file system. It uses the Smith-Waterman algorithm with [Inter-sequence Parallelization](https://pmc.ncbi.nlm.nih.gov/articles/PMC8419822/#Sec13). It's available on x64 Linux/Windows.
+A fuzzy search Neovim plugin. It supports searching in git repositories and the file system. It uses the Smith-Waterman algorithm with [Inter-sequence Parallelization](https://pmc.ncbi.nlm.nih.gov/articles/PMC8419822/#Sec13). It's available on x64 Linux/Windows. 
 
 It's inspired by [frizbee](https://github.com/saghen/frizbee) but written completely from scratch in C. It overcomes the original bucketing problem in `frizbee` by preserving index (buckets) between scans.
 
@@ -24,3 +24,10 @@ It's inspired by [frizbee](https://github.com/saghen/frizbee) but written comple
         { "<Leader>fr", function() require('swimd-lua').refresh() end }
     }
 }
+```
+## Features
+
+1. **Git integration** — searches Git repositories while respecting `.gitignore`.
+2. **File system watcher** — tracks directory changes and automatically updates the file list as files are added, removed, or renamed.
+3. **"I feel lucky"** — instantly opens the first matching file.
+
