@@ -180,6 +180,11 @@ M.i_feel_lucky = function (scanner_name, scanner, input)
         M.log("not so lucky, no matches")
         return
     end
+
+    if vim.fn.expand("%:p") == vim.fn.fnamemodify(first.path, ":p") then
+        M.log("already lucky")
+        return
+    end
     vim.cmd('e ' .. vim.fn.fnameescape(first.path))
 end
 
