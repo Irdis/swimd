@@ -20,7 +20,10 @@
 #define MSVC_LINKS \
     "-LIBPATH:\"lualib\"", "lua51.lib", \
     "-LIBPATH:\"libgit2\"", "git2.lib", \
-    "build\\swimd_thread.obj", "build\\swimd_log.obj", "build\\swimd_watch.obj"
+    "build\\swimd_bitset.obj", \
+    "build\\swimd_thread.obj", \
+    "build\\swimd_log.obj", \
+    "build\\swimd_watch.obj"
 
 #ifdef DEBUG_MODE
 #define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
@@ -36,6 +39,7 @@
 #define CC_LINKS  \
     "-llua5.1", \
     "-Lbuild", "-lgit2", \
+    "build/swimd_bitset.o", \
     "build/swimd_thread.o", \
     "build/swimd_log.o", \
     "build/swimd_watch.o"
@@ -62,6 +66,13 @@ int main(int argc, char **argv)
     if (!nob_copy_file("libgit2/libgit2.so", "build/libgit2.so")) return 1;
 
     Nob_Cmd cmd = {0};
+
+    nob_cmd_append(&cmd, "cc");
+    nob_cmd_append(&cmd, CC_SUBMODULE_CFLAGS);
+    cmd_add_debug_print_ifdef(&cmd);
+    nob_cmd_append(&cmd, "-c", "swimd_bitset.c");
+    nob_cmd_append(&cmd, "-o", "build/swimd_bitset.o");
+    if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");
     nob_cmd_append(&cmd, CC_SUBMODULE_CFLAGS);
@@ -107,6 +118,13 @@ int main(int argc, char **argv)
     if (!nob_copy_file("libgit2\\git2.dll", "build\\git2.dll")) return 1;
 
     Nob_Cmd cmd = {0};
+
+    nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, MSVC_SUBMODULE_CFLAGS);
+    cmd_add_debug_print_ifdef(&cmd);
+    nob_cmd_append(&cmd, "/c", "swimd_bitset.c");
+    nob_cmd_append(&cmd, "/Fo:build\\swimd_bitset.obj");
+    if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
     nob_cmd_append(&cmd, MSVC_SUBMODULE_CFLAGS);

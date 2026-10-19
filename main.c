@@ -18,6 +18,7 @@
 #include "lauxlib.h"
 #include "git2.h"
 
+#include "swimd_bitset.h"
 #include "swimd_thread.h"
 #include "swimd_log.h"
 #include "swimd_watch.h"
@@ -45,6 +46,9 @@
 
 #define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
+#define LANES_COUNT_CHAR 16
+#define PROFILE_CHAR_COUNT 256
+#define PREFILTER_THRESHOLD 0.5
 #define ERROR_THRESHOLD 0.2
 #define LEN_DIFF_ERROR_COST 0.3
 #define SUB_PENALTY -9
@@ -121,7 +125,12 @@ typedef struct {
 typedef struct {
     short *arr;
     int length;
-} SwimdFileVec;
+} SwimdFileNameVec;
+
+typedef struct {
+    char *arr;
+    int length;
+} SwimdFileProfileVec;
 
 typedef struct {
     int score;
@@ -147,16 +156,20 @@ typedef struct {
     char *needle;
     int needle_length;
     short *needle_vec;
+    char *needle_profile;
     int needle_vec_length;
 
     SwimdWatchOwner *watch_owner;
 
     SwimdFileList *files;
-    SwimdFileVec *files_vec;
-    int files_vec_length;
+    SwimdFileNameVec *files_name_vec;
+    int files_name_vec_length;
+    SwimdFileProfileVec *files_profile_vec;
+    int files_profile_vec_length;
 
     SwimdFolderStruct *folders;
     short *scores;
+    SwimdBitset scores_prefiltering;
     int scores_length;
     SwimdScoresHeap scores_heap;
 
@@ -869,10 +882,11 @@ static void swimd_list_directories_free(const SwimdFileList *lst,
 static void swimd_prep_files_vec(SwimdScanner *scanner) {
     SwimdFileList *files = scanner->files;
     int files_length = files->length;
-    int files_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
-    SwimdFileVec *files_vec = malloc(files_vec_length * sizeof(SwimdFileVec));
 
-    for (int i = 0; i < files_vec_length; i++) {
+    int files_name_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
+    SwimdFileNameVec *files_name_vec = malloc(files_name_vec_length * sizeof(SwimdFileNameVec));
+
+    for (int i = 0; i < files_name_vec_length; i++) {
         int max_length = 0;
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
             if (i * LANES_COUNT_SHORT + j >= files_length)
@@ -881,8 +895,8 @@ static void swimd_prep_files_vec(SwimdScanner *scanner) {
         }
 
         int file_vec_length = max_length * LANES_COUNT_SHORT;
-        short *file_vec_arr = malloc(file_vec_length * sizeof(short));
-        memset(file_vec_arr, 0, file_vec_length * sizeof(short));
+        short *file_name_vec_arr = malloc(file_vec_length * sizeof(short));
+        memset(file_name_vec_arr, 0, file_vec_length * sizeof(short));
 
         for (int k = 0; k < max_length; k++) {
             for (int j = 0; j < LANES_COUNT_SHORT; j++) {
@@ -891,28 +905,67 @@ static void swimd_prep_files_vec(SwimdScanner *scanner) {
                 SwimdFile file = files->arr[i * LANES_COUNT_SHORT + j];
                 if (k >= file.name_length)
                     continue;
-                file_vec_arr[k * LANES_COUNT_SHORT + j] = (short)file.name[k];
+                file_name_vec_arr[k * LANES_COUNT_SHORT + j] = (short)file.name[k];
             }
         }
-        files_vec[i] = (SwimdFileVec){
-            .arr = file_vec_arr,
+        files_name_vec[i] = (SwimdFileNameVec){
+            .arr = file_name_vec_arr,
             .length = file_vec_length,
         };
     }
-    scanner->files_vec = files_vec;
-    scanner->files_vec_length = files_vec_length;
+
+
+    int files_profile_vec_length = CEIL_DIV(files_length, LANES_COUNT_CHAR);
+    SwimdFileProfileVec *files_profile_vec = malloc(files_profile_vec_length * sizeof(SwimdFileProfileVec));
+
+    for (int i = 0; i < files_profile_vec_length; i++) {
+        int max_length = 0;
+        for (int j = 0; j < LANES_COUNT_CHAR; j++) {
+            if (i * LANES_COUNT_CHAR + j >= files_length)
+                break;
+            max_length = MAX(max_length, files->arr[i * LANES_COUNT_CHAR + j].name_length);
+        }
+
+        char *file_profile_vec_arr = malloc(PROFILE_CHAR_COUNT * LANES_COUNT_CHAR * sizeof(char));
+        memset(file_profile_vec_arr, 0, PROFILE_CHAR_COUNT * LANES_COUNT_CHAR * sizeof(char));
+
+        for (int k = 0; k < max_length; k++) {
+            for (int j = 0; j < LANES_COUNT_CHAR; j++) {
+                if (i * LANES_COUNT_CHAR + j >= files_length)
+                    break;
+                SwimdFile file = files->arr[i * LANES_COUNT_CHAR + j];
+                if (k >= file.name_length)
+                    continue;
+                file_profile_vec_arr[file.name[k] * LANES_COUNT_CHAR + j]++;
+            }
+        }
+        files_profile_vec[i] = (SwimdFileProfileVec){
+            .arr = file_profile_vec_arr,
+            .length = files_profile_vec_length,
+        };
+    }
+    scanner->files_name_vec = files_name_vec;
+    scanner->files_name_vec_length = files_name_vec_length;
+
+    scanner->files_profile_vec = files_profile_vec;
+    scanner->files_profile_vec_length = files_profile_vec_length;
 }
 
 static void swimd_prep_files_vec_free(SwimdScanner *state) {
-    for (int i = 0; i < state->files_vec_length; i++) {
-        SwimdFileVec file_vec = state->files_vec[i];
-        free(file_vec.arr);
+    for (int i = 0; i < state->files_name_vec_length; i++) {
+        SwimdFileNameVec file_name_vec = state->files_name_vec[i];
+        free(file_name_vec.arr);
     }
-    free(state->files_vec);
+    for (int i = 0; i < state->files_profile_vec_length; i++) {
+        SwimdFileProfileVec file_profile_vec = state->files_profile_vec[i];
+        free(file_profile_vec.arr);
+    }
+    free(state->files_name_vec);
+    free(state->files_profile_vec);
 }
 
-static void swimd_prep_needle_vec(SwimdScanner *state) {
-    int needle_vec_length = state->needle_length  *LANES_COUNT_SHORT;
+static void swimd_prep_needle(SwimdScanner *state) {
+    int needle_vec_length = state->needle_length * LANES_COUNT_SHORT;
     short *needle_vec = malloc(needle_vec_length * sizeof(short));
     for (int i = 0; i < state->needle_length; i++) {
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
@@ -921,9 +974,21 @@ static void swimd_prep_needle_vec(SwimdScanner *state) {
     }
     state->needle_vec = needle_vec;
     state->needle_vec_length = needle_vec_length;
+
+    int needle_profile_length = PROFILE_CHAR_COUNT * LANES_COUNT_CHAR;
+    char *needle_profile = malloc(needle_profile_length * sizeof(char));
+    memset(needle_profile, 0, needle_profile_length * sizeof(char));
+
+    for (int i = 0; i < state->needle_length; i++) {
+        for (int j = 0; j < LANES_COUNT_CHAR; j++) {
+            needle_profile[state->needle[i] * LANES_COUNT_CHAR + j]++;
+        }
+    }
+    state->needle_profile = needle_profile;
 }
 
-static void swimd_prep_needle_vec_free(SwimdScanner *state) {
+static void swimd_prep_needle_free(SwimdScanner *state) {
+    free(state->needle_profile);
     free(state->needle_vec);
 }
 
@@ -933,13 +998,13 @@ static void swimd_setup_needle(const char *needle, SwimdScanner *scanner) {
     strcpy(scanner->needle, needle);
     scanner->needle_length = needle_length;
 
-    swimd_prep_needle_vec(scanner);
+    swimd_prep_needle(scanner);
 }
 
 static void swimd_setup_needle_free(SwimdScanner *scanner) {
     free(scanner->needle);
 
-    swimd_prep_needle_vec_free(scanner);
+    swimd_prep_needle_free(scanner);
 }
 
 void swimd_vec_estimate_diagnostic(short *d,
@@ -1082,15 +1147,31 @@ static void swimd_simd_haystack_scores(short *d,
     }
 }
 
-
 static void swimd_simd_scores(SwimdScanner *scanner) {
-    for (int i = 0; i < scanner->files_vec_length; i++) {
+    for (int i = 0; i < scanner->files_name_vec_length; i++) {
+        int files_length = scanner->files->length;
+        bool all_filtered_out = true;
+        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+            int file_index = i * LANES_COUNT_SHORT + j;
+            if (file_index >= files_length) {
+                break;
+            }
+            if (swimd_bitset_get(&scanner->scores_prefiltering,
+                        file_index)) {
+                all_filtered_out = false;
+                break;
+            }
+        }
+
+        if (all_filtered_out)
+            continue;
+
         swimd_simd_haystack_scores(
             scanner->d_vec,
             scanner->needle_vec,
             scanner->needle_vec_length,
-            scanner->files_vec[i].arr,
-            scanner->files_vec[i].length,
+            scanner->files_name_vec[i].arr,
+            scanner->files_name_vec[i].length,
             i,
             scanner->scores,
             scanner->gap_distr_fun,
@@ -1100,13 +1181,60 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
     }
 }
 
+static void swimd_simd_haystack_prefilter(char *needle_profile,
+    int needle_length,
+    char *haystack_profile_vec,
+    int haystack_vec_index,
+    SwimdBitset *scores_prefiltering,
+    int files_length
+) {
+    int haystack_index = LANES_COUNT_CHAR * haystack_vec_index;
+    Vector res = _mm256_setzero_si256();
+    Vector zero = _mm256_setzero_si256();
+
+    for (int i = 0; i < PROFILE_CHAR_COUNT; i++) {
+        Vector va = _mm256_loadu_si256((Vector const*)&needle_profile[LANES_COUNT_CHAR * i]);
+        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[LANES_COUNT_CHAR * i]);
+
+        Vector diff = _mm256_sub_epi8(vb, va);
+        Vector mask = _mm256_cmpgt_epi8(zero, diff);
+        diff = _mm256_and_si256(diff, mask);
+        res = _mm256_add_epi8(res, diff);
+    }
+    char buf[LANES_COUNT_CHAR];
+    _mm256_storeu_si256((Vector*)buf, res);
+    for (int i = 0; i < LANES_COUNT_CHAR; i++) {
+        if (haystack_index + i >= files_length)
+            break;
+        swimd_bitset_set(scores_prefiltering,
+                haystack_index + i,
+                (float)ABS(buf[i]) / needle_length < PREFILTER_THRESHOLD);
+    }
+
+}
+
+static void swimd_simd_prefilter(SwimdScanner *scanner) {
+    for (int i = 0; i < scanner->files_profile_vec_length; i++) {
+        swimd_simd_haystack_prefilter(
+            scanner->needle_profile,
+            scanner->needle_length,
+            scanner->files_profile_vec[i].arr,
+            i,
+            &scanner->scores_prefiltering,
+            scanner->files->length
+        );
+    }
+}
+
 static void swimd_scores_init(SwimdScanner *state) {
-    state->scores = malloc(state->files_vec_length * LANES_COUNT_SHORT * sizeof(short));
-    state->scores_length = state->files_vec_length * LANES_COUNT_SHORT;
+    state->scores = malloc(state->files_name_vec_length * LANES_COUNT_SHORT * sizeof(short));
+    state->scores_length = state->files_name_vec_length * LANES_COUNT_SHORT;
+    swimd_bitset_init(&state->scores_prefiltering, state->files->length);
 }
 
 static void swimd_scores_free(SwimdScanner *state) {
     free(state->scores);
+    swimd_bitset_free(&state->scores_prefiltering);
 }
 
 static void swimd_scores_heap_init(SwimdScoresHeap *scores_heap, int max_size) {
@@ -1214,6 +1342,8 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
     int match_count = 0;
     swimd_scores_heap_init(&scanner->scores_heap, n);
     for (int i = 0; i < scanner->files->length; i++) {
+        if (!swimd_bitset_get(&scanner->scores_prefiltering, i))
+            continue;
         int min_score, max_score;
         SwimdFile *file = &scanner->files->arr[i];
         swimd_score_minmax(scanner->needle_length,
@@ -1684,6 +1814,7 @@ static void swimd_process_input(const char *needle,
         SwimdScanner *scanner) {
     swimd_setup_needle(needle, scanner);
 
+    swimd_simd_prefilter(scanner);
     swimd_simd_scores(scanner);
     swimd_top_scores(max_size, scanner);
 
