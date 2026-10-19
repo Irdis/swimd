@@ -155,9 +155,6 @@ typedef struct {
 
     char *needle;
     int needle_length;
-    short *needle_vec;
-    char *needle_profile;
-    int needle_vec_length;
 
     SwimdWatchOwner *watch_owner;
 
@@ -969,47 +966,15 @@ static void swimd_prep_files_vec_free(SwimdScanner *state) {
     free(state->files_profile_vec);
 }
 
-static void swimd_prep_needle(SwimdScanner *state) {
-    int needle_vec_length = state->needle_length * LANES_COUNT_SHORT;
-    short *needle_vec = malloc(needle_vec_length * sizeof(short));
-    for (int i = 0; i < state->needle_length; i++) {
-        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
-            needle_vec[i * LANES_COUNT_SHORT + j] = (short)state->needle[i];
-        }
-    }
-    state->needle_vec = needle_vec;
-    state->needle_vec_length = needle_vec_length;
-
-    int needle_profile_length = PROFILE_CHAR_COUNT * LANES_COUNT_CHAR;
-    char *needle_profile = malloc(needle_profile_length * sizeof(char));
-    memset(needle_profile, 0, needle_profile_length * sizeof(char));
-
-    for (int i = 0; i < state->needle_length; i++) {
-        for (int j = 0; j < LANES_COUNT_CHAR; j++) {
-            needle_profile[swimd_fold_case(state->needle[i]) * LANES_COUNT_CHAR + j]++;
-        }
-    }
-    state->needle_profile = needle_profile;
-}
-
-static void swimd_prep_needle_free(SwimdScanner *state) {
-    free(state->needle_profile);
-    free(state->needle_vec);
-}
-
 static void swimd_setup_needle(const char *needle, SwimdScanner *scanner) {
     int needle_length = strlen(needle);
     scanner->needle = malloc((needle_length + 1) * sizeof(char));
     strcpy(scanner->needle, needle);
     scanner->needle_length = needle_length;
-
-    swimd_prep_needle(scanner);
 }
 
 static void swimd_setup_needle_free(SwimdScanner *scanner) {
     free(scanner->needle);
-
-    swimd_prep_needle_free(scanner);
 }
 
 void swimd_vec_estimate_diagnostic(short *d,
@@ -1080,17 +1045,15 @@ static inline Vector swimd_simd_az_inverse_case(Vector x) {
 }
 
 static void swimd_simd_haystack_scores(short *d,
-    short *needle_vec,
-    int needle_vec_length,
+    char *needle,
+    int needle_length,
     short *haystack_vec,
     int haystack_vec_length,
     int haystack_index,
     short *scores,
     short *gap_distr_fun,
-    SwimdFileList *files,
-    char *needle
+    SwimdFileList *files
 ) {
-    int needle_length = needle_vec_length / LANES_COUNT_SHORT;
     int haystack_max_length = haystack_vec_length / LANES_COUNT_SHORT;
 
     Vector sub_pen = _mm256_set1_epi16(SUB_PENALTY);
@@ -1099,7 +1062,7 @@ static void swimd_simd_haystack_scores(short *d,
 
     for (int i = 1; i <= needle_length; i++) {
         Vector gap_pen_i = _mm256_set1_epi16(gap_distr_fun[i - 1]);
-        Vector va = _mm256_loadu_si256((Vector const*)&needle_vec[LANES_COUNT_SHORT * (i - 1)]);
+        Vector va = _mm256_set1_epi16(needle[i - 1]);
         Vector vca = swimd_simd_az_inverse_case(va);
         for (int j = 1; j <= haystack_max_length; j++) {
             Vector gap_pen_j = _mm256_set1_epi16(gap_distr_fun[j - 1]);
@@ -1173,20 +1136,22 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
 
         swimd_simd_haystack_scores(
             scanner->d_vec,
-            scanner->needle_vec,
-            scanner->needle_vec_length,
+            scanner->needle,
+            scanner->needle_length,
             scanner->files_name_vec[i].arr,
             scanner->files_name_vec[i].length,
             i,
             scanner->scores,
             scanner->gap_distr_fun,
-            scanner->files,
-            scanner->needle
+            scanner->files
         );
     }
 }
 
-static void swimd_simd_haystack_prefilter(char *needle_profile,
+static void swimd_simd_haystack_prefilter(
+    unsigned char *needle_diff_chars,
+    unsigned char *needle_diff_chars_frequency,
+    int needle_diff_chars_length,
     int needle_length,
     char *haystack_profile_vec,
     int haystack_vec_index,
@@ -1197,9 +1162,12 @@ static void swimd_simd_haystack_prefilter(char *needle_profile,
     Vector res = _mm256_setzero_si256();
     Vector zero = _mm256_setzero_si256();
 
-    for (int i = 0; i < PROFILE_CHAR_COUNT; i++) {
-        Vector va = _mm256_loadu_si256((Vector const*)&needle_profile[LANES_COUNT_CHAR * i]);
-        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[LANES_COUNT_CHAR * i]);
+    for (int i = 0; i < needle_diff_chars_length; i++) {
+        unsigned char needle_char = needle_diff_chars[i];
+        unsigned char needle_char_frequency = needle_diff_chars_frequency[i];
+
+        Vector va = _mm256_set1_epi8(needle_char_frequency);
+        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[LANES_COUNT_CHAR * needle_char]);
 
         Vector diff = _mm256_sub_epi8(vb, va);
         Vector mask = _mm256_cmpgt_epi8(zero, diff);
@@ -1219,9 +1187,31 @@ static void swimd_simd_haystack_prefilter(char *needle_profile,
 }
 
 static void swimd_simd_prefilter(SwimdScanner *scanner) {
+    unsigned char needle_diff_chars[PROFILE_CHAR_COUNT];
+    unsigned char needle_profile[PROFILE_CHAR_COUNT] = {0};
+    unsigned char needle_diff_chars_frequency[PROFILE_CHAR_COUNT];
+    int needle_diff_chars_length = 0;
+
+    for (int i = 0; i < scanner->needle_length; i++) {
+        unsigned char ch = swimd_fold_case(scanner->needle[i]);
+        needle_profile[ch]++;
+    }
+
+    for (int i = 0; i < PROFILE_CHAR_COUNT; i++) {
+        unsigned char ch = (unsigned char)i;
+        unsigned char fq = needle_profile[i];
+        if (fq > 0) {
+            needle_diff_chars[needle_diff_chars_length] = ch;
+            needle_diff_chars_frequency[needle_diff_chars_length] = fq;
+            needle_diff_chars_length++;
+        }
+    }
+
     for (int i = 0; i < scanner->files_profile_vec_length; i++) {
         swimd_simd_haystack_prefilter(
-            scanner->needle_profile,
+            needle_diff_chars,
+            needle_diff_chars_frequency,
+            needle_diff_chars_length,
             scanner->needle_length,
             scanner->files_profile_vec[i].arr,
             i,
