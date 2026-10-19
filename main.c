@@ -879,6 +879,11 @@ static void swimd_list_directories_free(const SwimdFileList *lst,
     }
 }
 
+static inline unsigned char swimd_fold_case(char c) {
+  unsigned char u = (unsigned char)c;
+  return (u >= 'A' && u <= 'Z') ? u + ('a' - 'A') : u;
+}
+
 static void swimd_prep_files_vec(SwimdScanner *scanner) {
     SwimdFileList *files = scanner->files;
     int files_length = files->length;
@@ -936,7 +941,7 @@ static void swimd_prep_files_vec(SwimdScanner *scanner) {
                 SwimdFile file = files->arr[i * LANES_COUNT_CHAR + j];
                 if (k >= file.name_length)
                     continue;
-                file_profile_vec_arr[file.name[k] * LANES_COUNT_CHAR + j]++;
+                file_profile_vec_arr[swimd_fold_case(file.name[k]) * LANES_COUNT_CHAR + j]++;
             }
         }
         files_profile_vec[i] = (SwimdFileProfileVec){
@@ -981,7 +986,7 @@ static void swimd_prep_needle(SwimdScanner *state) {
 
     for (int i = 0; i < state->needle_length; i++) {
         for (int j = 0; j < LANES_COUNT_CHAR; j++) {
-            needle_profile[state->needle[i] * LANES_COUNT_CHAR + j]++;
+            needle_profile[swimd_fold_case(state->needle[i]) * LANES_COUNT_CHAR + j]++;
         }
     }
     state->needle_profile = needle_profile;
