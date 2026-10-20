@@ -1941,6 +1941,16 @@ static int swimd_lua_setup_workspace(lua_State *L) {
     return 0;
 }
 
+static int swimd_lua_is_git_repo(lua_State *L) {
+    git_repository *repo = NULL;
+    SwimdScanner *scanner = &swimd_scanners[SCANNER_GIT];
+    int repo_result = git_repository_open_ext(&repo,
+            scanner->scan_path, 0, NULL);
+    git_repository_free(repo);
+    lua_pushboolean(L, repo_result != GIT_ENOTFOUND);
+    return 1;
+}
+
 static int swimd_lua_refresh_workspace(lua_State *L) {
     swimd_log_append(SWIMD_INFO, "Refreshing workspace, requested from lua");
     swimd_crit_lock(&swimd_scanners_request_lock);
@@ -2074,6 +2084,7 @@ int luaopen_swimd(lua_State *L) {
         {"setup_workspace", swimd_lua_setup_workspace},
         {"refresh_workspace", swimd_lua_refresh_workspace},
         {"is_refreshing", swimd_lua_is_refreshing},
+        {"is_git_repo", swimd_lua_is_git_repo},
         {"process_input", swimd_lua_process_input},
         {"shutdown", swimd_lua_shutdown},
         {"say_hello", swimd_lua_sayhello},

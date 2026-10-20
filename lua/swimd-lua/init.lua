@@ -153,7 +153,11 @@ end
 M.open_picker_git = function ()
     local swimd = require("swimd")
     local picker = require("swimd-lua/picker")
-    picker.open("git", M.create_data_callback(swimd.SCANNER_GIT))
+    if swimd.is_git_repo() then
+        picker.open("git", M.create_data_callback(swimd.SCANNER_GIT))
+    else
+        picker.open("files (not in git)", M.create_data_callback(swimd.SCANNER_FILES))
+    end
 end
 
 M.i_feel_lucky_git = function (input)
