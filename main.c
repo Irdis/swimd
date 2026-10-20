@@ -128,7 +128,7 @@ typedef struct {
 } SwimdFileNameVec;
 
 typedef struct {
-    char *arr;
+    short *arr;
     int length;
 } SwimdFileProfileVec;
 
@@ -917,28 +917,28 @@ static void swimd_prep_files_vec(SwimdScanner *scanner) {
     }
 
 
-    int files_profile_vec_length = CEIL_DIV(files_length, LANES_COUNT_CHAR);
+    int files_profile_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
     SwimdFileProfileVec *files_profile_vec = malloc(files_profile_vec_length * sizeof(SwimdFileProfileVec));
 
     for (int i = 0; i < files_profile_vec_length; i++) {
         int max_length = 0;
-        for (int j = 0; j < LANES_COUNT_CHAR; j++) {
-            if (i * LANES_COUNT_CHAR + j >= files_length)
+        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+            if (i * LANES_COUNT_SHORT + j >= files_length)
                 break;
-            max_length = MAX(max_length, files->arr[i * LANES_COUNT_CHAR + j].name_length);
+            max_length = MAX(max_length, files->arr[i * LANES_COUNT_SHORT + j].name_length);
         }
 
-        char *file_profile_vec_arr = malloc(PROFILE_CHAR_COUNT * LANES_COUNT_CHAR * sizeof(char));
-        memset(file_profile_vec_arr, 0, PROFILE_CHAR_COUNT * LANES_COUNT_CHAR * sizeof(char));
+        short *file_profile_vec_arr = malloc(PROFILE_CHAR_COUNT * LANES_COUNT_SHORT * sizeof(short));
+        memset(file_profile_vec_arr, 0, PROFILE_CHAR_COUNT * LANES_COUNT_SHORT * sizeof(short));
 
         for (int k = 0; k < max_length; k++) {
-            for (int j = 0; j < LANES_COUNT_CHAR; j++) {
-                if (i * LANES_COUNT_CHAR + j >= files_length)
+            for (int j = 0; j < LANES_COUNT_SHORT; j++) {
+                if (i * LANES_COUNT_SHORT + j >= files_length)
                     break;
-                SwimdFile file = files->arr[i * LANES_COUNT_CHAR + j];
+                SwimdFile file = files->arr[i * LANES_COUNT_SHORT + j];
                 if (k >= file.name_length)
                     continue;
-                file_profile_vec_arr[swimd_fold_case(file.name[k]) * LANES_COUNT_CHAR + j]++;
+                file_profile_vec_arr[swimd_fold_case(file.name[k]) * LANES_COUNT_SHORT + j]++;
             }
         }
         files_profile_vec[i] = (SwimdFileProfileVec){
@@ -1150,33 +1150,33 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
 
 static void swimd_simd_haystack_prefilter(
     unsigned char *needle_diff_chars,
-    unsigned char *needle_diff_chars_frequency,
+    short *needle_diff_chars_frequency,
     int needle_diff_chars_length,
     int needle_length,
-    char *haystack_profile_vec,
+    short *haystack_profile_vec,
     int haystack_vec_index,
     SwimdBitset *scores_prefiltering,
     int files_length
 ) {
-    int haystack_index = LANES_COUNT_CHAR * haystack_vec_index;
+    int haystack_index = LANES_COUNT_SHORT * haystack_vec_index;
     Vector res = _mm256_setzero_si256();
     Vector zero = _mm256_setzero_si256();
 
     for (int i = 0; i < needle_diff_chars_length; i++) {
         unsigned char needle_char = needle_diff_chars[i];
-        unsigned char needle_char_frequency = needle_diff_chars_frequency[i];
+        short needle_char_frequency = needle_diff_chars_frequency[i];
 
-        Vector va = _mm256_set1_epi8(needle_char_frequency);
-        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[LANES_COUNT_CHAR * needle_char]);
+        Vector va = _mm256_set1_epi16(needle_char_frequency);
+        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[LANES_COUNT_SHORT * needle_char]);
 
-        Vector diff = _mm256_sub_epi8(vb, va);
-        Vector mask = _mm256_cmpgt_epi8(zero, diff);
+        Vector diff = _mm256_sub_epi16(vb, va);
+        Vector mask = _mm256_cmpgt_epi16(zero, diff);
         diff = _mm256_and_si256(diff, mask);
-        res = _mm256_add_epi8(res, diff);
+        res = _mm256_add_epi16(res, diff);
     }
-    char buf[LANES_COUNT_CHAR];
+    short buf[LANES_COUNT_SHORT];
     _mm256_storeu_si256((Vector*)buf, res);
-    for (int i = 0; i < LANES_COUNT_CHAR; i++) {
+    for (int i = 0; i < LANES_COUNT_SHORT; i++) {
         if (haystack_index + i >= files_length)
             break;
         swimd_bitset_set(scores_prefiltering,
@@ -1188,8 +1188,8 @@ static void swimd_simd_haystack_prefilter(
 
 static void swimd_simd_prefilter(SwimdScanner *scanner) {
     unsigned char needle_diff_chars[PROFILE_CHAR_COUNT];
-    unsigned char needle_profile[PROFILE_CHAR_COUNT] = {0};
-    unsigned char needle_diff_chars_frequency[PROFILE_CHAR_COUNT];
+    short needle_profile[PROFILE_CHAR_COUNT] = {0};
+    short needle_diff_chars_frequency[PROFILE_CHAR_COUNT];
     int needle_diff_chars_length = 0;
 
     for (int i = 0; i < scanner->needle_length; i++) {
@@ -1199,7 +1199,7 @@ static void swimd_simd_prefilter(SwimdScanner *scanner) {
 
     for (int i = 0; i < PROFILE_CHAR_COUNT; i++) {
         unsigned char ch = (unsigned char)i;
-        unsigned char fq = needle_profile[i];
+        short fq = needle_profile[i];
         if (fq > 0) {
             needle_diff_chars[needle_diff_chars_length] = ch;
             needle_diff_chars_frequency[needle_diff_chars_length] = fq;
