@@ -162,7 +162,11 @@ end
 
 M.i_feel_lucky_git = function (input)
     local swimd = require("swimd")
-    M.i_feel_lucky("git", swimd.SCANNER_GIT, input)
+    if swimd.is_git_repo() then
+        M.i_feel_lucky("git", swimd.SCANNER_GIT, input)
+    else
+        M.i_feel_lucky("files", swimd.SCANNER_FILES, input)
+    end
 end
 
 M.i_feel_lucky_files = function (input)
