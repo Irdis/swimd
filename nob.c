@@ -1,10 +1,10 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
-// #define DEBUG_MODE 1
+#define DEBUG_MODE 1
 
 #ifdef DEBUG_MODE
-#define DEBUG_PRINT 1
+// #define DEBUG_PRINT 1
 #endif // DEBUG_MODE
 
 #define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI"

@@ -1812,6 +1812,8 @@ static void swimd_process_input(const char *needle,
     swimd_simd_prefilter(scanner);
     swimd_simd_scores(scanner);
     swimd_top_scores(max_size, scanner);
+    int *a = NULL;
+    int b = 1 + *a;
 
     result->items = malloc(max_size * sizeof(SwimdProcessInputResultItem));
 
