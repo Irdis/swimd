@@ -1,8 +1,10 @@
 # SWIMD
 
-A fuzzy search Neovim plugin. It supports searching in git repositories and the file system. It uses the Smith-Waterman algorithm with [Inter-sequence Parallelization](https://pmc.ncbi.nlm.nih.gov/articles/PMC8419822/#Sec13). It's available on x64 Linux/Windows. 
+A fuzzy search Neovim plugin. It supports searching in git repositories and the file system. It uses the Smith-Waterman algorithm with [Inter-sequence Parallelization](https://pmc.ncbi.nlm.nih.gov/articles/PMC8419822/#Sec13). It's available on x64 Linux/Windows.
 
 It's inspired by [frizbee](https://github.com/saghen/frizbee) but written completely from scratch in C. It overcomes the original bucketing problem in `frizbee` by preserving index (buckets) between scans.
+
+Before scoring, a SIMD-accelerated prefilter drops any haystack string that doesn't contain enough of the needle's characters. A string passes if it contains at least about 20% of them.
 
 <img width="2271" height="1221" alt="image" src="https://github.com/user-attachments/assets/faae0177-4030-4865-a2a8-5b3a386527aa" />
 
