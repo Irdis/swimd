@@ -7,7 +7,7 @@
 #define DEBUG_PRINT 1
 #endif // DEBUG_MODE
 
-#define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI"
+#define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI", "-std:c11", "-experimental:c11atomics"
 #define MSVC_SUBMODULE_CFLAGS "-nologo"
 
 #ifdef DEBUG_MODE
