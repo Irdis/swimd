@@ -134,11 +134,6 @@ typedef struct {
 } SwimdFileNameVec;
 
 typedef struct {
-    short *arr;
-    int length;
-} SwimdFileProfileVec;
-
-typedef struct {
     int score;
     int index;
 } SwimdScoresHeapItem;
@@ -306,6 +301,23 @@ static int swimd_get_core_count(void) {
 #endif
 }
 
+static void swimd_worker_prefilter_and_score(SwimdEstWrokers* est_workers,
+        int thread_index) {
+    while (1) {
+        int task_index = atomic_fetch_add(&est_workers->task_index, 1);
+        if (task_index >= est_workers->total_task_count)
+            break;
+
+        swimd_simd_prefilter_flat(est_workers->scanner,
+                task_index * EST_PACK_VEC_SIZE,
+                EST_PACK_VEC_SIZE);
+        swimd_simd_scores_flat(est_workers->scanner,
+                task_index * EST_PACK_VEC_SIZE,
+                EST_PACK_VEC_SIZE,
+                thread_index);
+    }
+}
+
 static void swimd_worker_loop_impl(int thread_index) {
     swimd_log_append(SWIMD_INFO, "Est worker started, worker_index=%d", thread_index);
     SwimdEstWrokers* est_workers = &swimd_est_workers;
@@ -314,20 +326,8 @@ static void swimd_worker_loop_impl(int thread_index) {
         if (est_workers->est_terminate_request) {
             break;
         }
-        // todo
-        while (1) {
-            int task_index = atomic_fetch_add(&est_workers->task_index, 1);
-            if (task_index >= est_workers->total_task_count)
-                break;
 
-            swimd_simd_prefilter_flat(est_workers->scanner,
-                    task_index * EST_PACK_VEC_SIZE,
-                    EST_PACK_VEC_SIZE);
-            swimd_simd_scores_flat(est_workers->scanner,
-                    task_index * EST_PACK_VEC_SIZE,
-                    EST_PACK_VEC_SIZE,
-                    thread_index);
-        }
+        swimd_worker_prefilter_and_score(est_workers, thread_index);
 
         swimd_are_set(&est_workers->est_ends[thread_index]);
     }
@@ -353,7 +353,7 @@ static void swimd_est_workers_init(void) {
         swimd_est_workers.enabled = false;
         return;
     }
-    int workers_count = core_count;
+    int workers_count = core_count - 1;
     swimd_log_append(SWIMD_INFO, "Starting est workers, workers_count=%d", workers_count);
 
 #ifdef _WIN32
@@ -370,6 +370,7 @@ static void swimd_est_workers_init(void) {
     swimd_est_workers.total_task_count = -1;
     swimd_est_workers.task_index = -1;
     swimd_est_workers.scanner = NULL;
+    swimd_est_workers.enabled = true;
 
     for (int i = 0; i < workers_count; i++) {
 #ifdef _WIN32
@@ -1343,15 +1344,18 @@ static void swimd_simd_scores_flat(SwimdScanner *scanner,
 }
 
 static void swimd_simd_scores(SwimdScanner *scanner) {
-    // swimd_log_append(SWIMD_DEBUG, "total: %d, after_prefilter: %d",
-    //         scanner->files->length, scanner->prefilter_candidates_count);
 #ifndef EST_PARALLEL_ENABLED
 
-        swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length, 0);
+    swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length);
+    swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
+    return;
+
+#else
+    if (!swimd_est_workers.enabled) {
+        swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length);
         swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
         return;
-#else
-
+    }
     swimd_est_workers.total_task_count = CEIL_DIV(scanner->files_vec16_length,
             EST_PACK_VEC_SIZE);
     swimd_est_workers.task_index = 0;
@@ -1360,6 +1364,10 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
     for (int i = 0; i < swimd_est_workers.est_threads_count; i++) {
         swimd_are_set(&swimd_est_workers.est_begins[i]);
     }
+
+    swimd_worker_prefilter_and_score(&swimd_est_workers,
+            swimd_est_workers.est_threads_count);
+
     for (int i = 0; i < swimd_est_workers.est_threads_count; i++) {
         swimd_are_wait(&swimd_est_workers.est_ends[i]);
     }
@@ -1825,7 +1833,7 @@ static void swimd_gap_distr_free(SwimdScanner *scanner) {
 
 static void swimd_scan_glob_init(SwimdScanner *scanner) {
     swimd_gap_distr_init(scanner);
-    swimd_d_vec_init(scanner, swimd_est_workers.est_threads_count);
+    swimd_d_vec_init(scanner, swimd_est_workers.est_threads_count + 1);
     swimd_scan_thread_init(scanner);
 }
 
