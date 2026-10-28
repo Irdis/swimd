@@ -33,6 +33,7 @@
 #else
     #define EXPORT __attribute__((visibility("default")))
 #endif
+#define uchar unsigned char
 
 #define SCANNER_GIT   0
 #define SCANNER_FILES 1
@@ -51,7 +52,7 @@
 #define PROFILE_CHAR_COUNT 256
 #define PREFILTER_THRESHOLD 0.7
 #define EST_MIN_TRIGGER_FILE_COUNT 5000
-#define EST_PACK_VEC_SIZE 200
+#define EST_PACK_VEC_SIZE 100
 // #define EST_PACK_VEC_SIZE 1000
 #define EST_PARALLEL_ENABLED 1
 #define ERROR_THRESHOLD 0.2
@@ -161,13 +162,17 @@ typedef struct {
     char *needle;
     int needle_length;
 
+    uchar *needle_diff_chars;
+    short *needle_diff_chars_frequency;
+    int needle_diff_chars_length;
+
     SwimdWatchOwner *watch_owner;
 
     SwimdFileList *files;
+    int files_vec16_length;
     SwimdFileNameVec *files_name_vec;
-    int files_name_vec_length;
-    SwimdFileProfileVec *files_profile_vec;
-    int files_profile_vec_length;
+    short *files_profile_vec;
+    int files_profile_vec_char_length;
 
     SwimdFolderStruct *folders;
     short *scores;
@@ -227,6 +232,12 @@ typedef struct {
     SwimdScanner* scanner;
 } SwimdEstWrokers;
 
+typedef struct {
+    double prefilter_and_scores_us;
+    double top_us;
+    int count;
+} SwimdPhaseTimes;
+
 static void swimd_list_files(const char *root_dir,
         char *base_path,
         SwimdFileList *file_list,
@@ -240,6 +251,8 @@ static void swimd_list_git(const char *root_dir,
         SwimdWatchOwner *watch_owner,
         bool refreshing);
 
+static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_start,
+        int profile_pack_count);
 static void swimd_simd_scores_flat(SwimdScanner *scanner,
         int file_vec_start, int file_vec_count, int d_ind);
 
@@ -254,6 +267,7 @@ static void* swimd_scanning_loop_files(void *lp_param);
 static bool swimd_initialized = false;
 static SwimdScanner swimd_scanners[SCANNER_COUNT] = {0};
 static SwimdEstWrokers swimd_est_workers = {0};
+static SwimdPhaseTimes swimd_phase_times = {0};
 
 #ifdef _WIN32
 static CRITICAL_SECTION swimd_scanners_request_lock;
@@ -262,6 +276,21 @@ static pthread_mutex_t swimd_scanners_request_lock;
 #endif
 
 static void swimd_watch_owner_notification_scanner_handler(SwimdWatchOwner *owner);
+
+static double swimd_now_us(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER t;
+    if (freq.QuadPart == 0)
+        QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t);
+    return t.QuadPart * 1e6 / freq.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
+#endif
+}
 
 static void swimd_git2_init(void) {
     git_libgit2_init();
@@ -291,6 +320,9 @@ static void swimd_worker_loop_impl(int thread_index) {
             if (task_index >= est_workers->total_task_count)
                 break;
 
+            swimd_simd_prefilter_flat(est_workers->scanner,
+                    task_index * EST_PACK_VEC_SIZE,
+                    EST_PACK_VEC_SIZE);
             swimd_simd_scores_flat(est_workers->scanner,
                     task_index * EST_PACK_VEC_SIZE,
                     EST_PACK_VEC_SIZE,
@@ -1024,8 +1056,8 @@ static void swimd_list_directories_free(const SwimdFileList *lst,
     }
 }
 
-static inline unsigned char swimd_fold_case(char c) {
-  unsigned char u = (unsigned char)c;
+static inline uchar swimd_fold_case(char c) {
+  uchar u = (uchar)c;
   return (u >= 'A' && u <= 'Z') ? u + ('a' - 'A') : u;
 }
 
@@ -1033,10 +1065,10 @@ static void swimd_prep_files_vec(SwimdScanner *scanner) {
     SwimdFileList *files = scanner->files;
     int files_length = files->length;
 
-    int files_name_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
-    SwimdFileNameVec *files_name_vec = malloc(files_name_vec_length * sizeof(SwimdFileNameVec));
+    int files_vec16_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
+    SwimdFileNameVec *files_name_vec = malloc(files_vec16_length * sizeof(SwimdFileNameVec));
 
-    for (int i = 0; i < files_name_vec_length; i++) {
+    for (int i = 0; i < files_vec16_length; i++) {
         int max_length = 0;
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
             if (i * LANES_COUNT_SHORT + j >= files_length)
@@ -1065,53 +1097,59 @@ static void swimd_prep_files_vec(SwimdScanner *scanner) {
     }
 
 
-    int files_profile_vec_length = CEIL_DIV(files_length, LANES_COUNT_SHORT);
-    SwimdFileProfileVec *files_profile_vec = malloc(files_profile_vec_length * sizeof(SwimdFileProfileVec));
+    int profile_char_vec_length = LANES_COUNT_SHORT * CEIL_DIV(files_length, LANES_COUNT_SHORT);
+    short *files_profile_vec = malloc(PROFILE_CHAR_COUNT * profile_char_vec_length * sizeof(short));
 
-    for (int i = 0; i < files_profile_vec_length; i++) {
-        int max_length = 0;
-        for (int j = 0; j < LANES_COUNT_SHORT; j++) {
-            if (i * LANES_COUNT_SHORT + j >= files_length)
-                break;
-            max_length = MAX(max_length, files->arr[i * LANES_COUNT_SHORT + j].name_length);
+    for (int i = 0; i < files_length; i++) {
+
+        SwimdFile file = files->arr[i];
+
+        for (int j = 0; j < file.name_length; j++) {
+            uchar ch = swimd_fold_case(file.name[j]);
+            files_profile_vec[ch * profile_char_vec_length + i]++;
         }
-
-        short *file_profile_vec_arr = malloc(PROFILE_CHAR_COUNT * LANES_COUNT_SHORT * sizeof(short));
-        memset(file_profile_vec_arr, 0, PROFILE_CHAR_COUNT * LANES_COUNT_SHORT * sizeof(short));
-
-        for (int k = 0; k < max_length; k++) {
-            for (int j = 0; j < LANES_COUNT_SHORT; j++) {
-                if (i * LANES_COUNT_SHORT + j >= files_length)
-                    break;
-                SwimdFile file = files->arr[i * LANES_COUNT_SHORT + j];
-                if (k >= file.name_length)
-                    continue;
-                file_profile_vec_arr[swimd_fold_case(file.name[k]) * LANES_COUNT_SHORT + j]++;
-            }
-        }
-        files_profile_vec[i] = (SwimdFileProfileVec){
-            .arr = file_profile_vec_arr,
-            .length = files_profile_vec_length,
-        };
     }
     scanner->files_name_vec = files_name_vec;
-    scanner->files_name_vec_length = files_name_vec_length;
-
     scanner->files_profile_vec = files_profile_vec;
-    scanner->files_profile_vec_length = files_profile_vec_length;
+    scanner->files_profile_vec_char_length = profile_char_vec_length;
+    scanner->files_vec16_length = files_vec16_length;
 }
 
 static void swimd_prep_files_vec_free(SwimdScanner *state) {
-    for (int i = 0; i < state->files_name_vec_length; i++) {
+    for (int i = 0; i < state->files_vec16_length; i++) {
         SwimdFileNameVec file_name_vec = state->files_name_vec[i];
         free(file_name_vec.arr);
     }
-    for (int i = 0; i < state->files_profile_vec_length; i++) {
-        SwimdFileProfileVec file_profile_vec = state->files_profile_vec[i];
-        free(file_profile_vec.arr);
-    }
+
     free(state->files_name_vec);
     free(state->files_profile_vec);
+}
+
+static void swimd_setup_needle_profile(const char *needle, SwimdScanner *scanner) {
+    uchar *needle_diff_chars = malloc(PROFILE_CHAR_COUNT * sizeof(uchar));
+    short *needle_diff_chars_frequency = malloc(PROFILE_CHAR_COUNT * sizeof(short));
+    int needle_diff_chars_length = 0;
+
+    short needle_profile[PROFILE_CHAR_COUNT] = {0};
+    int prefilter_candidates_count = 0;
+
+    for (int i = 0; i < scanner->needle_length; i++) {
+        uchar ch = swimd_fold_case(scanner->needle[i]);
+        needle_profile[ch]++;
+    }
+
+    for (int i = 0; i < PROFILE_CHAR_COUNT; i++) {
+        uchar ch = (uchar)i;
+        short fq = needle_profile[i];
+        if (fq > 0) {
+            needle_diff_chars[needle_diff_chars_length] = ch;
+            needle_diff_chars_frequency[needle_diff_chars_length] = fq;
+            needle_diff_chars_length++;
+        }
+    }
+    scanner->needle_diff_chars = needle_diff_chars;
+    scanner->needle_diff_chars_frequency = needle_diff_chars_frequency;
+    scanner->needle_diff_chars_length = needle_diff_chars_length;
 }
 
 static void swimd_setup_needle(const char *needle, SwimdScanner *scanner) {
@@ -1119,10 +1157,14 @@ static void swimd_setup_needle(const char *needle, SwimdScanner *scanner) {
     scanner->needle = malloc((needle_length + 1) * sizeof(char));
     strcpy(scanner->needle, needle);
     scanner->needle_length = needle_length;
+
+    swimd_setup_needle_profile(needle, scanner);
 }
 
 static void swimd_setup_needle_free(SwimdScanner *scanner) {
     free(scanner->needle);
+    free(scanner->needle_diff_chars);
+    free(scanner->needle_diff_chars_frequency);
 }
 
 void swimd_vec_estimate_diagnostic(short *d,
@@ -1266,7 +1308,7 @@ static void swimd_simd_haystack_scores(short *d,
 static void swimd_simd_scores_flat(SwimdScanner *scanner,
         int file_vec_start, int file_vec_count, int d_ind) {
     int file_vec_end = MIN(file_vec_start + file_vec_count,
-            scanner->files_name_vec_length);
+            scanner->files_vec16_length);
 
     for (int i = file_vec_start; i < file_vec_end; i++) {
         int files_length = scanner->files->length;
@@ -1305,18 +1347,12 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
     //         scanner->files->length, scanner->prefilter_candidates_count);
 #ifndef EST_PARALLEL_ENABLED
 
-        swimd_simd_scores_flat(scanner, 0, scanner->files_name_vec_length, 0);
+        swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length, 0);
+        swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
         return;
 #else
-    // if (!swimd_est_workers.enabled ||
-    //         scanner->prefilter_candidates_count < EST_MIN_TRIGGER_FILE_COUNT)
-    // {
-    //     swimd_simd_scores_flat(scanner,
-    //             0, scanner->files_name_vec_length, 0);
-    //     return;
-    // }
 
-    swimd_est_workers.total_task_count = CEIL_DIV(scanner->files_name_vec_length,
+    swimd_est_workers.total_task_count = CEIL_DIV(scanner->files_vec16_length,
             EST_PACK_VEC_SIZE);
     swimd_est_workers.task_index = 0;
     swimd_est_workers.scanner = scanner;
@@ -1334,11 +1370,12 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
 }
 
 static void swimd_simd_haystack_prefilter(
-    unsigned char *needle_diff_chars,
+    uchar *needle_diff_chars,
     short *needle_diff_chars_frequency,
     int needle_diff_chars_length,
     int needle_length,
     short *haystack_profile_vec,
+    int haystack_profile_char_vec_length,
     int haystack_vec_index,
     SwimdBitset *scores_prefiltering,
     int files_length,
@@ -1349,11 +1386,12 @@ static void swimd_simd_haystack_prefilter(
     Vector zero = _mm256_setzero_si256();
 
     for (int i = 0; i < needle_diff_chars_length; i++) {
-        unsigned char needle_char = needle_diff_chars[i];
+        uchar needle_char = needle_diff_chars[i];
         short needle_char_frequency = needle_diff_chars_frequency[i];
 
         Vector va = _mm256_set1_epi16(needle_char_frequency);
-        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[LANES_COUNT_SHORT * needle_char]);
+        Vector vb = _mm256_loadu_si256((Vector const*)&haystack_profile_vec[
+                needle_char * haystack_profile_char_vec_length + haystack_index]);
 
         Vector diff = _mm256_sub_epi16(vb, va);
         Vector mask = _mm256_cmpgt_epi16(zero, diff);
@@ -1378,47 +1416,34 @@ static void swimd_simd_haystack_prefilter(
 
 }
 
-static void swimd_simd_prefilter(SwimdScanner *scanner) {
-    unsigned char needle_diff_chars[PROFILE_CHAR_COUNT];
-    short needle_profile[PROFILE_CHAR_COUNT] = {0};
-    short needle_diff_chars_frequency[PROFILE_CHAR_COUNT];
-    int needle_diff_chars_length = 0;
+static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_start,
+        int profile_pack_count) {
+
+    int profile_pack_length = CEIL_DIV(scanner->files->length, LANES_COUNT_SHORT);
+    int profile_pack_end = MIN(profile_pack_start + profile_pack_count,
+            profile_pack_length);
+
     int prefilter_candidates_count = 0;
-
-    for (int i = 0; i < scanner->needle_length; i++) {
-        unsigned char ch = swimd_fold_case(scanner->needle[i]);
-        needle_profile[ch]++;
-    }
-
-    for (int i = 0; i < PROFILE_CHAR_COUNT; i++) {
-        unsigned char ch = (unsigned char)i;
-        short fq = needle_profile[i];
-        if (fq > 0) {
-            needle_diff_chars[needle_diff_chars_length] = ch;
-            needle_diff_chars_frequency[needle_diff_chars_length] = fq;
-            needle_diff_chars_length++;
-        }
-    }
-
-    for (int i = 0; i < scanner->files_profile_vec_length; i++) {
+    for (int i = profile_pack_start; i < profile_pack_end; i++) {
         swimd_simd_haystack_prefilter(
-            needle_diff_chars,
-            needle_diff_chars_frequency,
-            needle_diff_chars_length,
+            scanner->needle_diff_chars,
+            scanner->needle_diff_chars_frequency,
+            scanner->needle_diff_chars_length,
             scanner->needle_length,
-            scanner->files_profile_vec[i].arr,
+            scanner->files_profile_vec,
+            scanner->files_profile_vec_char_length,
             i,
             &scanner->scores_prefiltering,
             scanner->files->length,
             &prefilter_candidates_count
         );
     }
-    scanner->prefilter_candidates_count = prefilter_candidates_count;
+    // scanner->prefilter_candidates_count = prefilter_candidates_count;
 }
 
 static void swimd_scores_init(SwimdScanner *state) {
-    state->scores = malloc(state->files_name_vec_length * LANES_COUNT_SHORT * sizeof(short));
-    state->scores_length = state->files_name_vec_length * LANES_COUNT_SHORT;
+    state->scores = malloc(state->files_vec16_length * LANES_COUNT_SHORT * sizeof(short));
+    state->scores_length = state->files_vec16_length * LANES_COUNT_SHORT;
     swimd_bitset_init(&state->scores_prefiltering, state->files->length);
 }
 
@@ -2016,9 +2041,16 @@ static void swimd_process_input(const char *needle,
         SwimdScanner *scanner) {
     swimd_setup_needle(needle, scanner);
 
-    swimd_simd_prefilter(scanner);
+    double t0 = swimd_now_us();
     swimd_simd_scores(scanner);
+
+    double t1 = swimd_now_us();
     swimd_top_scores(max_size, scanner);
+
+    double t2 = swimd_now_us();
+    swimd_phase_times.prefilter_and_scores_us += t1 - t0;
+    swimd_phase_times.top_us += t2 - t1;
+    swimd_phase_times.count++;
 
     result->items = malloc(max_size * sizeof(SwimdProcessInputResultItem));
 
@@ -2348,6 +2380,50 @@ static void swimd_scenario_reinit(void) {
     printf("Over\n");
 }
 
+static void swimd_scenario_bench(void) {
+    swimd_global_init("swimd.log");
+    swimd_scanners_glob_init();
+
+    SwimdScanner *scanner = &swimd_scanners[SCANNER_FILES];
+
+    for (int i = 0; i < 10; i++) {
+
+        swimd_crit_lock(&swimd_scanners_request_lock);
+#ifdef _WIN32
+        swimd_scanners_setup_path("c:\\Projects\\experiments");
+#else
+        swimd_scanners_setup_path("/home/ivan/Projects/chromium");
+#endif
+        swimd_crit_unlock(&swimd_scanners_request_lock);
+
+        int count = 0;
+        int it_count = 50;
+
+        while(1) {
+
+            double begin = swimd_now_us();
+
+            for (int i = 0; i < it_count; i++) {
+                SwimdProcessInputResult result = {0};
+                swimd_scan_process_input("sound", 10, &result, scanner);
+                swimd_scan_process_input_free(&result);
+            }
+
+            double end = swimd_now_us();
+            double time_spent = (end - begin) / 1000;
+            printf("time spent %fms\n", time_spent / it_count);
+            SwimdPhaseTimes *pt = &swimd_phase_times;
+            printf("prefilter & scores %.1fus, top %.1fus\n",
+                    pt->prefilter_and_scores_us / pt->count,
+                    pt->top_us / pt->count);
+            memset(pt, 0, sizeof(SwimdPhaseTimes));
+        }
+    }
+    swimd_shutdown();
+
+    printf("Over\n");
+}
+
 static void swimd_scenario_scanning(void) {
     swimd_global_init("swimd.log");
     swimd_scanners_glob_init();
@@ -2360,47 +2436,50 @@ static void swimd_scenario_scanning(void) {
 #ifdef _WIN32
         swimd_scanners_setup_path("c:\\Projects\\experiments");
 #else
-        swimd_scanners_setup_path("/home/ivan/Projects");
+        swimd_scanners_setup_path("/home/ivan/Projects/chromium");
 #endif
         swimd_crit_unlock(&swimd_scanners_request_lock);
 
         int count = 0;
-        int it_count = 50;
 
         while(1) {
 
-            clock_t begin = clock();
+            double begin = swimd_now_us();
 
-            for (int i = 0; i < it_count; i++) {
-                SwimdProcessInputResult result = {0};
-                swimd_scan_process_input("sound", 10, &result, scanner);
-                swimd_scan_process_input_free(&result);
+            SwimdProcessInputResult result = {0};
+            swimd_scan_process_input("sound", 10, &result, scanner);
+
+            double end = swimd_now_us();
+
+            double time_spent = (end - begin) / 1000;
+            printf("time spent %fms\n", time_spent);
+
+            SwimdPhaseTimes *pt = &swimd_phase_times;
+            printf("prefilter & scores %.1fus, top %.1fus\n",
+                    pt->prefilter_and_scores_us / pt->count,
+                    pt->top_us / pt->count);
+            memset(pt, 0, sizeof(SwimdPhaseTimes));
+
+            if (result.scan_in_progress) {
+                printf("Scanning %d\n", result.scanned_items_count);
+            } else {
+                if (result.items_length == 0) {
+                    printf("nothing matches\n");
+                }
+
+                for (int i = 0; i < result.items_length; i++) {
+                    SwimdProcessInputResultItem item = result.items[i];
+
+                    printf("name = %s, score = %d, path = %s\n",
+                            item.name,
+                            item.score,
+                            item.path);
+                }
             }
 
-            clock_t end = clock();
-            double time_spent = (double)((end - begin) * 1000) / CLOCKS_PER_SEC;
-            printf("time spent %fms\n", time_spent / it_count);
-
-            // if (result.scan_in_progress) {
-            //     printf("Scanning %d\n", result.scanned_items_count);
-            // } else {
-            //     if (result.items_length == 0) {
-            //         printf("nothing matches\n");
-            //     }
-            //
-            //     for (int i = 0; i < result.items_length; i++) {
-            //         SwimdProcessInputResultItem item = result.items[i];
-            //
-            //         printf("name = %s, score = %d, path = %s\n",
-            //                 item.name,
-            //                 item.score,
-            //                 item.path);
-            //     }
-            // }
-            //
-            // swimd_scan_process_input_free(&result);
-            // count++;
-            // if (count % 120 == 0)
+            swimd_scan_process_input_free(&result);
+            count++;
+            if (count % 20 == 0)
                 getchar();
         }
     }
@@ -2463,7 +2542,8 @@ cleanup:
 }
 
 int main() {
-    swimd_scenario_scanning();
+    swimd_scenario_bench();
+    // swimd_scenario_scanning();
     // swimd_scenario_reinit();
     // swimd_scenario_watch();
 
