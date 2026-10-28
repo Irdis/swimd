@@ -20,6 +20,7 @@
 #include "git2.h"
 
 #include "swimd_bitset.h"
+#include "swimd_heap.h"
 #include "swimd_thread.h"
 #include "swimd_log.h"
 #include "swimd_watch.h"
@@ -76,9 +77,6 @@ static int GAP_PENALTY[][2] = {
 
 #define IS_ROOT_FOLDER(f) ((f)->parent == NULL)
 
-#define LEFT_HEAP(ind) (2*((ind) + 1) - 1)
-#define RIGHT_HEAP(ind) (2*((ind) + 1))
-#define PARENT_HEAP(ind) (((ind) - 1) / 2)
 #define SWAP(a, b, type) \
     do {                 \
         type temp = a;   \
@@ -133,17 +131,6 @@ typedef struct {
     int length;
 } SwimdFileNameVec;
 
-typedef struct {
-    int score;
-    int index;
-} SwimdScoresHeapItem;
-
-typedef struct  {
-    SwimdScoresHeapItem *arr;
-    int size;
-    int max_size;
-} SwimdScoresHeap;
-
 typedef void (*swimd_scanning_func)(const char*,
         char*,
         SwimdFileList*,
@@ -174,7 +161,8 @@ typedef struct {
     SwimdBitset scores_prefiltering;
     int prefilter_candidates_count;
     int scores_length;
-    SwimdScoresHeap scores_heap;
+    SwimdHeap* scores_heaps;
+    int scores_heaps_count;
 
     short **d_vec;
     int d_vec_count;
@@ -250,6 +238,8 @@ static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_st
         int profile_pack_count);
 static void swimd_simd_scores_flat(SwimdScanner *scanner,
         int file_vec_start, int file_vec_count, int d_ind);
+static void swimd_top_scores_flat(SwimdScanner *scanner,
+        int file_vec_start, int file_vec_count, int heap_ind);
 
 #ifdef _WIN32
 static DWORD WINAPI swimd_scanning_loop_git(LPVOID lp_param);
@@ -312,6 +302,10 @@ static void swimd_worker_prefilter_and_score(SwimdEstWrokers* est_workers,
                 task_index * EST_PACK_VEC_SIZE,
                 EST_PACK_VEC_SIZE);
         swimd_simd_scores_flat(est_workers->scanner,
+                task_index * EST_PACK_VEC_SIZE,
+                EST_PACK_VEC_SIZE,
+                thread_index);
+        swimd_top_scores_flat(est_workers->scanner,
                 task_index * EST_PACK_VEC_SIZE,
                 EST_PACK_VEC_SIZE,
                 thread_index);
@@ -1153,16 +1147,37 @@ static void swimd_setup_needle_profile(const char *needle, SwimdScanner *scanner
     scanner->needle_diff_chars_length = needle_diff_chars_length;
 }
 
-static void swimd_setup_needle(const char *needle, SwimdScanner *scanner) {
+static void swimd_setup_score_heaps(int max_size, SwimdScanner *scanner) {
+    int heaps_count = swimd_est_workers.est_threads_count + 1;
+    SwimdHeap *heaps = malloc(heaps_count * sizeof(SwimdHeap));
+    for (int i = 0; i < heaps_count; i++) {
+        SwimdHeap *heap = &heaps[i];
+        swimd_heap_init(heap, max_size);
+    }
+    scanner->scores_heaps = heaps;
+    scanner->scores_heaps_count = heaps_count;
+}
+
+static void swimd_setup_needle(const char *needle, int max_size, SwimdScanner *scanner) {
     int needle_length = strlen(needle);
     scanner->needle = malloc((needle_length + 1) * sizeof(char));
     strcpy(scanner->needle, needle);
     scanner->needle_length = needle_length;
 
     swimd_setup_needle_profile(needle, scanner);
+    swimd_setup_score_heaps(max_size, scanner);
+}
+
+static void swimd_scores_heaps_free(SwimdScanner *scanner) {
+    for (int i = 0; i < scanner->scores_heaps_count; i++) {
+        SwimdHeap *heap = &scanner->scores_heaps[i];
+        swimd_heap_free(heap);
+    }
+    free(scanner->scores_heaps);
 }
 
 static void swimd_setup_needle_free(SwimdScanner *scanner) {
+    swimd_scores_heaps_free(scanner);
     free(scanner->needle);
     free(scanner->needle_diff_chars);
     free(scanner->needle_diff_chars_frequency);
@@ -1348,12 +1363,14 @@ static void swimd_simd_scores(SwimdScanner *scanner) {
 
     swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length);
     swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
+    swimd_top_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
     return;
 
 #else
     if (!swimd_est_workers.enabled) {
         swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length);
         swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
+        swimd_top_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
         return;
     }
     swimd_est_workers.total_task_count = CEIL_DIV(scanner->files_vec16_length,
@@ -1460,84 +1477,6 @@ static void swimd_scores_free(SwimdScanner *state) {
     swimd_bitset_free(&state->scores_prefiltering);
 }
 
-static void swimd_scores_heap_init(SwimdScoresHeap *scores_heap, int max_size) {
-    scores_heap->arr = malloc(max_size * sizeof(SwimdScoresHeapItem));
-    scores_heap->size = 0;
-    scores_heap->max_size = max_size;
-}
-
-static void swimd_scores_heap_free(SwimdScoresHeap *scores_heap) {
-    free(scores_heap->arr);
-}
-
-static void swimd_scores_heap_cut_head(SwimdScoresHeap *scores_heap) {
-    scores_heap->size--;
-    scores_heap->arr[0] = scores_heap->arr[scores_heap->size];
-
-    int ind = 0;
-    while (1) {
-        int left_ind = LEFT_HEAP(ind);
-        int right_ind = RIGHT_HEAP(ind);
-        int smallest = ind;
-        if (left_ind < scores_heap->size &&
-            scores_heap->arr[smallest].score > scores_heap->arr[left_ind].score) {
-            smallest = left_ind;
-        }
-
-        if (right_ind < scores_heap->size &&
-            scores_heap->arr[smallest].score > scores_heap->arr[right_ind].score) {
-            smallest = right_ind;
-        }
-
-        if (smallest == ind)
-            break;
-
-        SWAP(scores_heap->arr[ind],
-                scores_heap->arr[smallest],
-                SwimdScoresHeapItem);
-        ind = smallest;
-    }
-}
-
-static void swimd_scores_heap_insert(SwimdScoresHeap *scores_heap, SwimdScoresHeapItem item) {
-    if (scores_heap->size == 0) {
-        scores_heap->size++;
-        scores_heap->arr[0] = item;
-        return;
-    }
-    if (scores_heap->size == scores_heap->max_size) {
-        if (scores_heap->arr[0].score >= item.score)
-        {
-            return;
-        }
-        swimd_scores_heap_cut_head(scores_heap);
-    }
-    scores_heap->arr[scores_heap->size] = item;
-    int ind = scores_heap->size;
-    scores_heap->size++;
-    while (1) {
-        if (ind <= 0)
-            break;
-        int parent_ind = PARENT_HEAP(ind);
-        if (scores_heap->arr[parent_ind].score > scores_heap-> arr[ind].score) {
-            SWAP(scores_heap->arr[parent_ind],
-                    scores_heap-> arr[ind],
-                    SwimdScoresHeapItem);
-            ind = parent_ind;
-            continue;
-        }
-        break;
-    }
-}
-
-static int swimd_compare_heap_item(const void *a, const void *b) {
-    SwimdScoresHeapItem *a_item = (SwimdScoresHeapItem*)a;
-    SwimdScoresHeapItem *b_item = (SwimdScoresHeapItem*)b;
-    if (a_item->score == b_item->score)
-        return 0;
-    return a_item->score > b_item->score ? 1 : -1;
-}
-
 static void swimd_top_scores_diagnostic(
         int min_score,
         int max_score,
@@ -1561,10 +1500,31 @@ static void swimd_top_scores_diagnostic(
     nob_sb_free(sb);
 }
 
-static int swimd_top_scores(int n, SwimdScanner *scanner) {
-    int match_count = 0;
-    swimd_scores_heap_init(&scanner->scores_heap, n);
-    for (int i = 0; i < scanner->files->length; i++) {
+int swimd_compare_heap_item(const void *a, const void *b) {
+    SwimdHeapItem *a_item = (SwimdHeapItem*)a;
+    SwimdHeapItem *b_item = (SwimdHeapItem*)b;
+    if (a_item->score == b_item->score)
+        return 0;
+    return a_item->score > b_item->score ? 1 : -1;
+}
+
+static void swimd_top_scores_merge_and_sort(SwimdScanner *scanner) {
+    swimd_heap_merge_many(scanner->scores_heaps, scanner->scores_heaps_count);
+    qsort(scanner->scores_heaps[0].arr,
+            scanner->scores_heaps[0].size,
+            sizeof(SwimdHeapItem),
+            swimd_compare_heap_item);
+}
+
+static void swimd_top_scores_flat(SwimdScanner *scanner,
+        int file_vec_start, int file_vec_count, int heap_ind) {
+
+    int file_vec_end = MIN(file_vec_start + file_vec_count,
+            scanner->files_vec16_length);
+    int haystack_start = LANES_COUNT_SHORT * file_vec_start;
+    int haystack_end = MIN(file_vec_end * LANES_COUNT_SHORT, scanner->files->length);
+
+    for (int i = haystack_start; i < haystack_end; i++) {
         if (!swimd_bitset_get(&scanner->scores_prefiltering, i))
             continue;
         int min_score, max_score;
@@ -1590,41 +1550,21 @@ static int swimd_top_scores(int n, SwimdScanner *scanner) {
             (double)(MAX(scanner->needle_length, file->name_length)) * LEN_DIFF_ERROR_COST * normalized_score;
         normalized_score -= len_diff_error;
 
-#ifdef DEBUG_PRINT
-        // swimd_top_scores_diag(min_score,
-        //         max_score,
-        //         score,
-        //         normalized_score,
-        //         len_diff_error,
-        //         scanner->needle,
-        //         file->name);
-#endif
         if (normalized_score < ERROR_THRESHOLD * 100) {
             continue;
         }
 
-        swimd_scores_heap_insert(&scanner->scores_heap, (SwimdScoresHeapItem){
+        swimd_heap_insert(&scanner->scores_heaps[heap_ind], (SwimdHeapItem){
                 .score = normalized_score,
                 .index = i
         });
-        match_count++;
     }
-    qsort(scanner->scores_heap.arr,
-            scanner->scores_heap.size,
-            sizeof(SwimdScoresHeapItem),
-            swimd_compare_heap_item);
-
-    return match_count;
 }
 
 static void swimd_init_root_folder(SwimdFolderStruct *root) {
     root->parent = NULL;
     root->name = NULL;
     root->name_length = 0;
-}
-
-static void swimd_top_scores_free(SwimdScanner *scanner) {
-    swimd_scores_heap_free(&scanner->scores_heap);
 }
 
 static void swimd_scanner_free(SwimdScanner *scanner) {
@@ -2047,13 +1987,13 @@ static void swimd_process_input(const char *needle,
         int max_size,
         SwimdProcessInputResult *result,
         SwimdScanner *scanner) {
-    swimd_setup_needle(needle, scanner);
+    swimd_setup_needle(needle, max_size, scanner);
 
     double t0 = swimd_now_us();
     swimd_simd_scores(scanner);
 
     double t1 = swimd_now_us();
-    swimd_top_scores(max_size, scanner);
+    swimd_top_scores_merge_and_sort(scanner);
 
     double t2 = swimd_now_us();
     swimd_phase_times.prefilter_and_scores_us += t1 - t0;
@@ -2062,8 +2002,8 @@ static void swimd_process_input(const char *needle,
 
     result->items = malloc(max_size * sizeof(SwimdProcessInputResultItem));
 
-    for (int i = 0; i < scanner->scores_heap.size; i++) {
-        SwimdScoresHeapItem heap_item = scanner->scores_heap.arr[i];
+    for (int i = 0; i < scanner->scores_heaps[0].size; i++) {
+        SwimdHeapItem heap_item = scanner->scores_heaps[0].arr[i];
         SwimdFile file = scanner->files->arr[heap_item.index];
 
         char path[MAX_PATH_LENGTH];
@@ -2087,7 +2027,6 @@ static void swimd_process_input(const char *needle,
                 SwimdProcessInputResultItem);
     }
 
-    swimd_top_scores_free(scanner);
     swimd_setup_needle_free(scanner);
 }
 
