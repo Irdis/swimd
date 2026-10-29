@@ -53,7 +53,7 @@
 #define PROFILE_CHAR_COUNT 256
 #define PREFILTER_THRESHOLD 0.7
 #define EST_MIN_TRIGGER_FILE_COUNT 5000
-#define EST_PACK_VEC_SIZE 100
+#define EST_PACK_VEC_SIZE 30
 // #define EST_PACK_VEC_SIZE 1000
 #define EST_PARALLEL_ENABLED 1
 #define ERROR_THRESHOLD 0.2
@@ -234,7 +234,7 @@ static void swimd_list_git(const char *root_dir,
         SwimdWatchOwner *watch_owner,
         bool refreshing);
 
-static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_start,
+static bool swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_start,
         int profile_pack_count);
 static void swimd_simd_scores_flat(SwimdScanner *scanner,
         int file_vec_start, int file_vec_count, int d_ind);
@@ -291,21 +291,21 @@ static int swimd_get_core_count(void) {
 #endif
 }
 
+static void swimd_prefilter_and_score(SwimdScanner *scanner, int vec_ind, int vec_size, int thread_index) {
+    bool all_filtered_out =  swimd_simd_prefilter_flat(scanner, vec_ind, vec_size);
+    if (!all_filtered_out) {
+        swimd_simd_scores_flat(scanner, vec_ind, vec_size, thread_index);
+        swimd_top_scores_flat(scanner, vec_ind, vec_size, thread_index);
+    }
+}
+
 static void swimd_worker_prefilter_and_score(SwimdEstWrokers* est_workers,
         int thread_index) {
     while (1) {
         int task_index = atomic_fetch_add(&est_workers->task_index, 1);
         if (task_index >= est_workers->total_task_count)
             break;
-
-        swimd_simd_prefilter_flat(est_workers->scanner,
-                task_index * EST_PACK_VEC_SIZE,
-                EST_PACK_VEC_SIZE);
-        swimd_simd_scores_flat(est_workers->scanner,
-                task_index * EST_PACK_VEC_SIZE,
-                EST_PACK_VEC_SIZE,
-                thread_index);
-        swimd_top_scores_flat(est_workers->scanner,
+        swimd_prefilter_and_score(est_workers->scanner,
                 task_index * EST_PACK_VEC_SIZE,
                 EST_PACK_VEC_SIZE,
                 thread_index);
@@ -1361,16 +1361,13 @@ static void swimd_simd_scores_flat(SwimdScanner *scanner,
 static void swimd_simd_scores(SwimdScanner *scanner) {
 #ifndef EST_PARALLEL_ENABLED
 
-    swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length);
-    swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
-    swimd_top_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
+    swimd_prefilter_and_score(scanner, 0, scanner->files_vec16_length, 0);
     return;
 
 #else
-    if (!swimd_est_workers.enabled) {
-        swimd_simd_prefilter_flat(scanner, 0, scanner->files_vec16_length);
-        swimd_simd_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
-        swimd_top_scores_flat(scanner, 0, scanner->files_vec16_length, 0);
+    if (!swimd_est_workers.enabled ||
+            scanner->files->length < EST_MIN_TRIGGER_FILE_COUNT) {
+        swimd_prefilter_and_score(scanner, 0, scanner->files_vec16_length, 0);
         return;
     }
     swimd_est_workers.total_task_count = CEIL_DIV(scanner->files_vec16_length,
@@ -1404,7 +1401,7 @@ static void swimd_simd_haystack_prefilter(
     int haystack_vec_index,
     SwimdBitset *scores_prefiltering,
     int files_length,
-    int *prefilter_candidates_count
+    bool *all_filtered_out
 ) {
     int haystack_index = LANES_COUNT_SHORT * haystack_vec_index;
     Vector res = _mm256_setzero_si256();
@@ -1432,16 +1429,15 @@ static void swimd_simd_haystack_prefilter(
         bool keep_candidate = (float)ABS(buf[i]) / needle_length <
             PREFILTER_THRESHOLD;
         if (keep_candidate)
-            (*prefilter_candidates_count)++;
+            *all_filtered_out = false;
 
         swimd_bitset_set(scores_prefiltering,
                 haystack_index + i,
                 keep_candidate);
     }
-
 }
 
-static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_start,
+static bool swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_start,
         int profile_pack_count) {
 
     int profile_pack_length = CEIL_DIV(scanner->files->length, LANES_COUNT_SHORT);
@@ -1449,6 +1445,7 @@ static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_st
             profile_pack_length);
 
     int prefilter_candidates_count = 0;
+    bool all_filtered_out = true;
     for (int i = profile_pack_start; i < profile_pack_end; i++) {
         swimd_simd_haystack_prefilter(
             scanner->needle_diff_chars,
@@ -1460,10 +1457,10 @@ static void swimd_simd_prefilter_flat(SwimdScanner *scanner, int profile_pack_st
             i,
             &scanner->scores_prefiltering,
             scanner->files->length,
-            &prefilter_candidates_count
+            &all_filtered_out
         );
     }
-    // scanner->prefilter_candidates_count = prefilter_candidates_count;
+    return all_filtered_out;
 }
 
 static void swimd_scores_init(SwimdScanner *state) {
@@ -2490,7 +2487,7 @@ cleanup:
 
 int main() {
     swimd_scenario_bench();
-    // swimd_scenario_scanning();
+    swimd_scenario_scanning();
     // swimd_scenario_reinit();
     // swimd_scenario_watch();
 
