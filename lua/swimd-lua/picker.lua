@@ -1,6 +1,8 @@
 local M = {}
 
 M.matches = {}
+M.scan_in_progress = false
+M.scanned_items_count = 0
 M.input = ""
 M.selected = 1
 
@@ -57,7 +59,7 @@ M.open = function(title, data_callback)
 
     vim.api.nvim_buf_set_lines(M.input_buf, 0, -1, false, {""})
     vim.api.nvim_win_set_cursor(M.input_win, {1, 0})
-    M.update(false)
+    M.update(true, false)
     vim.cmd.startinsert()
 end
 
@@ -120,9 +122,13 @@ M.update_display_window = function ()
     M.display_selected = M.selected - M.display_window_ind + 1
 end
 
-M.update = function (reset_selection)
-    local data = M.data_callback(M.input)
-    M.matches = data.items
+M.update = function (load, reset_selection)
+    if load then
+        local data = M.data_callback(M.input)
+        M.matches = data.items
+        M.scan_in_progress = data.scan_in_progress
+        M.scanned_items_count = data.scanned_items_count
+    end
     if #M.matches == 0 then
         M.selected = 0
     elseif reset_selection then
@@ -139,8 +145,8 @@ M.update = function (reset_selection)
         table.insert(lines, M.matches[i])
     end
     if #M.matches == 0 then
-        if data.scan_in_progress then
-            local scanning = "Scanning " .. data.scanned_items_count .. " ..."
+        if M.scan_in_progress then
+            local scanning = "Scanning " .. M.scanned_items_count .. " ..."
             table.insert(lines, { name = scanning, path = "", is_loading = true })
         else
             local no_matches = "No matches"
@@ -157,7 +163,7 @@ M.update = function (reset_selection)
         })
     end
 
-    if data.scan_in_progress then
+    if M.scan_in_progress then
         M.start_refresh_timer()
     else
         M.stop_refresh_timer()
@@ -174,7 +180,7 @@ M.start_refresh_timer = function ()
             M.stop_refresh_timer()
             return
         end
-        M.update(true)
+        M.update(true, true)
     end))
 end
 
@@ -227,14 +233,14 @@ M.handle_events = function ()
                 noremap = false,
                 callback = function()
                     M.selected = M.selected < #M.matches and M.selected + 1 or 1
-                    M.update(false)
+                    M.update(false, false)
                 end
             })
             vim.api.nvim_buf_set_keymap(M.input_buf, 'i', '<C-p>', '', {
                 noremap = false,
                 callback = function()
                     M.selected = M.selected > 1 and M.selected - 1 or #M.matches
-                    M.update(false)
+                    M.update(false, false)
                 end
             })
         end
@@ -244,7 +250,7 @@ M.handle_events = function ()
         buffer = M.input_buf,
         callback = function()
             M.input = vim.api.nvim_get_current_line()
-            M.update(true)
+            M.update(true, true)
         end
     })
 end
