@@ -112,7 +112,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, CC_INCLUDES);
     nob_cmd_append(&cmd, CC_LINKS);
     nob_cmd_append(&cmd, "-o", "build/swimd.so");
-    nob_cmd_append(&cmd, "main.c");
+    nob_cmd_append(&cmd, "swimd_scanner.c");
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");
@@ -121,7 +121,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, CC_INCLUDES);
     nob_cmd_append(&cmd, CC_LINKS);
     nob_cmd_append(&cmd, "-o", "build/swimd");
-    nob_cmd_append(&cmd, "main.c");
+    nob_cmd_append(&cmd, "swimd_scanner.c");
     if (!nob_cmd_run(&cmd)) return 1;
 #else
     if (!nob_copy_file("libgit2\\git2.dll", "build\\git2.dll")) return 1;
@@ -165,7 +165,7 @@ int main(int argc, char **argv)
 
     nob_cmd_append(&cmd, "cl");
     cmd_add_debug_print_ifdef(&cmd);
-    nob_cmd_append(&cmd, "main.c");
+    nob_cmd_append(&cmd, "swimd_scanner.c");
     nob_cmd_append(&cmd, "-LD", MSVC_CFLAGS);
 
 	nob_cmd_append(&cmd, MSVC_INCLUDES);
@@ -178,7 +178,7 @@ int main(int argc, char **argv)
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
-    nob_cmd_append(&cmd, "main.c");
+    nob_cmd_append(&cmd, "swimd_scanner.c");
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, MSVC_CFLAGS);
 
