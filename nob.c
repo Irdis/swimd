@@ -30,14 +30,14 @@
 #ifdef DEBUG_MODE
 #define CC_CFLAGS "-O0", "-Wreturn-type", "-g"
 #else // DEBUG_MODE
-#define CC_CFLAGS "-O2", "-Wreturn-type"
+#define CC_CFLAGS  "-flto", "-O2", "-Wreturn-type"
 #endif // DEBUG_MODE
 
 
 #ifdef DEBUG_MODE
 #define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-g"
 #else // DEBUG_MODE
-#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-O2"
+#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-flto", "-O2"
 #endif // DEBUG_MODE
 
 #define CC_INCLUDES \
