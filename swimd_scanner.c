@@ -4,10 +4,8 @@
     #include <pthread.h>
     #include <dirent.h>
 #endif
-#include <stdbool.h>
 #include <string.h>
 
-#include <stdatomic.h>
 #include <assert.h>
 #include <immintrin.h>
 #include <stdio.h>
@@ -15,8 +13,6 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <time.h>
-#include "lua.h"
-#include "lauxlib.h"
 #include "git2.h"
 
 #include "swimd_bitset.h"
@@ -24,17 +20,9 @@
 #include "swimd_thread.h"
 #include "swimd_log.h"
 #include "swimd_watch.h"
+#include "swimd_scanner.h"
 
-#define NOB_IMPLEMENTATION
-#undef ERROR
 #include "nob.h"
-
-#ifdef _WIN32
-    #define EXPORT __declspec(dllexport)
-#else
-    #define EXPORT __attribute__((visibility("default")))
-#endif
-#define uchar unsigned char
 
 #define SCANNER_GIT   0
 #define SCANNER_FILES 1
@@ -84,142 +72,11 @@ static int GAP_PENALTY[][2] = {
         b = temp;        \
     } while (0)
 
+bool swimd_scanner_initialized = false;
+SwimdScanner swimd_scanner_scanners[SCANNER_COUNT] = {0};
+SwimdScannerEstWrokers swimd_scanner_est_workers = {0};
+SwimdScannerPhaseTimes swimd_scanner_phase_times = {0};
 
-typedef struct  {
-    char *path;
-    char *name;
-    int score;
-} SwimdScannerProcessInputResultItem;
-
-typedef struct {
-    bool scan_in_progress;
-    int scanned_items_count;
-    SwimdScannerProcessInputResultItem *items;
-    int items_length;
-} SwimdScannerProcessInputResult;
-
-typedef struct SwimdScannerFolderStruct SwimdScannerFolderStruct;
-
-typedef struct {
-    SwimdScannerFolderStruct **arr;
-    int length;
-    int capacity;
-} SwimdScannerFolderStructList;
-
-typedef struct SwimdScannerFolderStruct
-{
-    char *name;
-    int name_length;
-    SwimdScannerFolderStructList folder_lst;
-    struct SwimdScannerFolderStruct *parent;
-} SwimdScannerFolderStruct;
-
-typedef struct {
-    char *name;
-    int name_length;
-    SwimdScannerFolderStruct *folder;
-} SwimdScannerFile;
-
-typedef struct {
-    SwimdScannerFile *arr;
-    int length;
-    int capacity;
-} SwimdScannerFileList;
-
-typedef struct {
-    short *arr;
-    int length;
-} SwimdScannerFileNameVec;
-
-typedef void (*swimd_scanner_scanning_func)(const char*,
-        char*,
-        SwimdScannerFileList*,
-        SwimdScannerFolderStruct*,
-        SwimdWatchOwner*,
-        bool);
-
-typedef struct {
-    bool initialized;
-
-    char *needle;
-    int needle_length;
-
-    uchar *needle_diff_chars;
-    short *needle_diff_chars_frequency;
-    int needle_diff_chars_length;
-
-    SwimdWatchOwner *watch_owner;
-
-    SwimdScannerFileList *files;
-    int files_vec16_length;
-    SwimdScannerFileNameVec *files_name_vec;
-    short *files_profile_vec;
-    int files_profile_vec_char_length;
-
-    SwimdScannerFolderStruct *folders;
-    short *scores;
-    SwimdBitset scores_prefiltering;
-    int prefilter_candidates_count;
-    int scores_length;
-    SwimdHeap* scores_heaps;
-    int scores_heaps_count;
-
-    short **d_vec;
-    int d_vec_count;
-    short *gap_distr_fun;
-    short *gap_distr_sum;
-
-#ifdef _WIN32
-    HANDLE scan_thread;
-    HANDLE scan_begin;
-    HANDLE scan_started;
-    HANDLE scan_finished;
-    CRITICAL_SECTION scan_state_swap;
-#else
-    pthread_t scan_thread;
-    SwimdAutoResetEvent scan_begin;
-    SwimdAutoResetEvent scan_started;
-    SwimdManualResetEvent scan_finished;
-    pthread_mutex_t scan_state_swap;
-#endif
-    volatile bool scan_terminate_request;
-    volatile bool scan_cancelled_request;
-    volatile bool scan_in_progress;
-    volatile bool scan_is_refreshing;
-    volatile bool scan_terminated;
-    char *scan_path;
-    char *base_path;
-    int scan_files_count;
-    int scan_files_refresh_count;
-
-    swimd_scanner_scanning_func scanning_func;
-    swimd_thread_callback scanning_loop;
-} SwimdScanner;
-
-typedef struct {
-    bool enabled;
-    int est_threads_count;
-#ifdef _WIN32
-    HANDLE* est_begins;
-    HANDLE* est_ends;
-    HANDLE* est_threads;
-#else
-    SwimdAutoResetEvent* est_begins;
-    SwimdAutoResetEvent* est_ends;
-    pthread_t* est_threads;
-#endif
-    volatile bool est_terminate_request;
-
-    int total_task_count;
-    atomic_int task_index;
-    SwimdScanner* scanner;
-} SwimdScannerEstWrokers;
-
-typedef struct {
-    double prefilter_and_scores_us;
-    double top_us;
-    int count;
-} SwimdScannerPhaseTimes;
 
 static void swimd_scanner_list_files(const char *root_dir,
         char *base_path,
@@ -249,20 +106,9 @@ static void* swimd_scanner_scanning_loop_git(void *lp_param);
 static void* swimd_scanner_scanning_loop_files(void *lp_param);
 #endif
 
-static bool swimd_scanner_initialized = false;
-static SwimdScanner swimd_scanner_scanners[SCANNER_COUNT] = {0};
-static SwimdScannerEstWrokers swimd_scanner_est_workers = {0};
-static SwimdScannerPhaseTimes swimd_scanner_phase_times = {0};
-
-#ifdef _WIN32
-static CRITICAL_SECTION swimd_scanner_scanners_request_lock;
-#else
-static pthread_mutex_t swimd_scanner_scanners_request_lock;
-#endif
-
 static void swimd_scanner_watch_owner_notification_scanner_handler(SwimdWatchOwner *owner);
 
-static double swimd_scanner_now_us(void) {
+double swimd_scanner_now_us(void) {
 #ifdef _WIN32
     static LARGE_INTEGER freq;
     LARGE_INTEGER t;
@@ -429,7 +275,7 @@ static void swimd_scanner_scanners_request_lock_free(void) {
      swimd_crit_close(&swimd_scanner_scanners_request_lock);
 }
 
-static void swimd_scanner_global_init(const char *log_path) {
+void swimd_scanner_global_init(const char *log_path) {
     swimd_scanner_initialized = true;
 
     swimd_log_init(log_path);
@@ -924,7 +770,7 @@ static void swimd_scanner_git_collect_index_paths(git_repository *repo,
     int cur_depth = 0;
     char cur_path[MAX_PATH_LENGTH] = "";
 
-    for (int i = 0; i < entry_count; i++) {
+    for (size_t i = 0; i < entry_count; i++) {
         const git_index_entry *entry = git_index_get_byindex(index, i);
         int depth = 0;
         cur_folder = swimd_scanner_process_path(entry->path,
@@ -952,7 +798,8 @@ static void swimd_scanner_git_collect_status_paths(git_repository *repo,
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_GIT];
     if (scanner->scan_cancelled_request)
         return;
-    git_status_options status_opts = GIT_STATUS_OPTIONS_INIT;
+    git_status_options status_opts;
+    git_status_options_init(&status_opts, GIT_STATUS_OPTIONS_VERSION);
     status_opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
     status_opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED |
                         GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
@@ -1010,6 +857,8 @@ static void swimd_scanner_list_git(const char *root_dir,
         SwimdScannerFolderStruct *root_folder,
         SwimdWatchOwner *watch_owner,
         bool refreshing) {
+    (void)watch_owner;
+
     git_repository *repo = NULL;
 
     int repo_result = git_repository_open_ext(&repo, root_dir, 0, NULL);
@@ -1127,13 +976,12 @@ static void swimd_scanner_prep_files_vec_free(SwimdScanner *state) {
     free(state->files_profile_vec);
 }
 
-static void swimd_scanner_setup_needle_profile(const char *needle, SwimdScanner *scanner) {
+static void swimd_scanner_setup_needle_profile(SwimdScanner *scanner) {
     uchar *needle_diff_chars = malloc(PROFILE_CHAR_COUNT * sizeof(uchar));
     short *needle_diff_chars_frequency = malloc(PROFILE_CHAR_COUNT * sizeof(short));
     int needle_diff_chars_length = 0;
 
     short needle_profile[PROFILE_CHAR_COUNT] = {0};
-    int prefilter_candidates_count = 0;
 
     for (int i = 0; i < scanner->needle_length; i++) {
         uchar ch = swimd_scanner_fold_case(scanner->needle[i]);
@@ -1171,7 +1019,7 @@ static void swimd_scanner_setup_needle(const char *needle, int max_size, SwimdSc
     strcpy(scanner->needle, needle);
     scanner->needle_length = needle_length;
 
-    swimd_scanner_setup_needle_profile(needle, scanner);
+    swimd_scanner_setup_needle_profile(scanner);
     swimd_scanner_setup_score_heaps(max_size, scanner);
 }
 
@@ -1451,7 +1299,6 @@ static bool swimd_scanner_simd_prefilter_flat(SwimdScanner *scanner, int profile
     int profile_pack_end = MIN(profile_pack_start + profile_pack_count,
             profile_pack_length);
 
-    int prefilter_candidates_count = 0;
     bool all_filtered_out = true;
     for (int i = profile_pack_start; i < profile_pack_end; i++) {
         swimd_scanner_simd_haystack_prefilter(
@@ -1656,6 +1503,9 @@ static void swimd_scanner_scanning_loop_impl(SwimdScanner *scanner) {
 
         swimd_scanner_start_scanning(scanner->scan_path,
                 scanner, scanner->scan_is_refreshing);
+
+        swimd_log_append(SWIMD_DEBUG, "stop scanning");
+
         scanner->scan_in_progress = false;
         scanner->scan_is_refreshing = false;
 
@@ -1676,11 +1526,13 @@ static DWORD WINAPI swimd_scanner_scanning_loop_files(LPVOID lp_param) {
 }
 #else
 static void* swimd_scanner_scanning_loop_git(void *lp_param) {
+    (void)lp_param;
     swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_GIT]);
     return NULL;
 }
 
 static void* swimd_scanner_scanning_loop_files(void *lp_param) {
+    (void)lp_param;
     swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_FILES]);
     return NULL;
 }
@@ -1781,7 +1633,7 @@ static void swimd_scan_glob_init(SwimdScanner *scanner) {
     swimd_scan_thread_init(scanner);
 }
 
-static void swimd_scanner_scanners_glob_init(void) {
+void swimd_scanner_scanners_glob_init(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scan_glob_init(&swimd_scanner_scanners[i]);
     }
@@ -1833,7 +1685,7 @@ static void swimd_scanner_scanners_glob_free(void) {
     }
 }
 
-static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) {
+static void swimd_scanner_scan_setup_path(const char *scan_path, SwimdScanner *scanner) {
     scanner->scan_cancelled_request = true;
     swimd_mre_wait(&scanner->scan_finished);
     scanner->scan_cancelled_request = false;
@@ -1848,7 +1700,9 @@ static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) 
     scanner->scan_path = malloc((scan_path_len + 1) * sizeof(char));
     strcpy(scanner->scan_path, scan_path);
 
+        swimd_log_append(SWIMD_DEBUG, "start scanning");
     scanner->scan_in_progress = true;
+    swimd_log_append(SWIMD_DEBUG, scanner->scan_in_progress ? "checking: scan in progress" : "checking: scan completed");
     scanner->scan_files_count = 0;
     scanner->scan_files_refresh_count = 0;
     swimd_are_set(&scanner->scan_begin);
@@ -1856,13 +1710,13 @@ static void swimd_scan_setup_path(const char *scan_path, SwimdScanner *scanner) 
     swimd_are_wait(&scanner->scan_started);
 }
 
-static void swimd_scanner_scanners_setup_path(const char *scan_path) {
+void swimd_scanner_scanners_setup_path(const char *scan_path) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_setup_path(scan_path, &swimd_scanner_scanners[i]);
+        swimd_scanner_scan_setup_path(scan_path, &swimd_scanner_scanners[i]);
     }
 }
 
-static bool swimd_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
+bool swimd_scanner_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
     bool res = scanner->scan_in_progress;
     if (!scanner->scan_is_refreshing) {
         // maybe refresh was called before we completed initial setup.
@@ -1874,7 +1728,7 @@ static bool swimd_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
     return res;
 }
 
-static void swimd_scan_refresh_path(SwimdScanner *scanner) {
+void swimd_scanner_scan_refresh_path(SwimdScanner *scanner) {
     if (scanner->scan_in_progress)
         return;
 
@@ -1886,7 +1740,7 @@ static void swimd_scan_refresh_path(SwimdScanner *scanner) {
     swimd_are_wait(&scanner->scan_started);
 }
 
-static void swimd_scanner_scanners_watch_end_tracking(void) {
+void swimd_scanner_scanners_watch_end_tracking(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
         SwimdScanner *scanner = &swimd_scanner_scanners[i];
         SwimdWatchOwner *scanner_owner = scanner->watch_owner;
@@ -1898,6 +1752,7 @@ static void swimd_scanner_scanners_watch_end_tracking(void) {
 }
 
 static void swimd_scanner_watch_owner_notification_scanner_handler(SwimdWatchOwner *owner) {
+    (void)owner;
     swimd_log_append(SWIMD_INFO, "Refreshing workspace, requested from watch notification handler");
     swimd_crit_lock(&swimd_scanner_scanners_request_lock);
     for (int i = 0; i < SCANNER_COUNT; i++) {
@@ -1909,7 +1764,7 @@ static void swimd_scanner_watch_owner_notification_scanner_handler(SwimdWatchOwn
     swimd_scanner_scanners_watch_end_tracking();
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_refresh_path(&swimd_scanner_scanners[i]);
+        swimd_scanner_scan_refresh_path(&swimd_scanner_scanners[i]);
     }
 
 cleanup:
@@ -2034,7 +1889,7 @@ static void swimd_scanner_process_input(const char *needle,
     swimd_scanner_setup_needle_free(scanner);
 }
 
-static void swimd_scanner_scan_process_input(const char *input,
+void swimd_scanner_scan_process_input(const char *input,
         int max_size,
         SwimdScannerProcessInputResult *result,
         SwimdScanner *scanner) {
@@ -2043,6 +1898,7 @@ static void swimd_scanner_scan_process_input(const char *input,
 
     result->scanned_items_count = scanner->scan_files_count;
 
+    swimd_log_append(SWIMD_DEBUG, scanner->scan_in_progress ? "checking: scan in progress" : "checking: scan completed");
     if (scanner->scan_in_progress && !scanner->scan_is_refreshing) {
         result->scan_in_progress = true;
     } else {
@@ -2053,7 +1909,7 @@ static void swimd_scanner_scan_process_input(const char *input,
     swimd_crit_unlock(&scanner->scan_state_swap);
 }
 
-static void swimd_scanner_scan_process_input_free(SwimdScannerProcessInputResult *result) {
+void swimd_scanner_scan_process_input_free(SwimdScannerProcessInputResult *result) {
     if (result->items == NULL)
         return;
 
@@ -2065,24 +1921,6 @@ static void swimd_scanner_scan_process_input_free(SwimdScannerProcessInputResult
     free(result->items);
 }
 
-static int swimd_scanner_lua_init(lua_State *L) {
-    if (swimd_scanner_initialized) {
-        swimd_log_append(SWIMD_INFO, "Already initialized");
-        return 0;
-    }
-    const char *log_path = lua_gettop(L) == 0 || lua_isnil(L, 1)
-        ? NULL : luaL_checkstring(L, 1);
-
-    swimd_scanner_global_init(log_path);
-
-    swimd_log_append(SWIMD_INFO, "Initializing");
-
-    swimd_scanner_scanners_glob_init();
-
-    swimd_log_append(SWIMD_INFO, "Initializing completed");
-    return 0;
-}
-
 static void swimd_scanner_watch_owners_shutdown(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
         SwimdScanner *scanner = &swimd_scanner_scanners[i];
@@ -2090,7 +1928,7 @@ static void swimd_scanner_watch_owners_shutdown(void) {
     }
 }
 
-static void swimd_scanner_shutdown(void) {
+void swimd_scanner_shutdown(void) {
     if (!swimd_scanner_initialized) {
         return;
     }
@@ -2109,394 +1947,4 @@ static void swimd_scanner_shutdown(void) {
     swimd_scanner_global_free();
 
     swimd_scanner_initialized = false;
-}
-
-static int swimd_scanner_lua_shutdown(lua_State *L) {
-    swimd_scanner_shutdown();
-    return 0;
-}
-
-static int swimd_scanner_lua_setup_workspace(lua_State *L) {
-    const char *workspace = luaL_checkstring(L, 1);
-
-    swimd_log_append(SWIMD_INFO, "Setting up workspace path %s", workspace);
-
-    swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-
-    swimd_scanner_scanners_watch_end_tracking();
-    swimd_scanner_scanners_setup_path(workspace);
-
-    swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-    swimd_log_append(SWIMD_INFO, "Workspace path setup");
-    return 0;
-}
-
-static int swimd_scanner_lua_is_git_repo(lua_State *L) {
-    git_repository *repo = NULL;
-    SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_GIT];
-    int repo_result = git_repository_open_ext(&repo,
-            scanner->scan_path, 0, NULL);
-    git_repository_free(repo);
-    lua_pushboolean(L, repo_result != GIT_ENOTFOUND);
-    return 1;
-}
-
-static int swimd_scanner_lua_refresh_workspace(lua_State *L) {
-    swimd_log_append(SWIMD_INFO, "Refreshing workspace, requested from lua");
-    swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-
-    for (int i = 0; i < SCANNER_COUNT; i++) {
-        SwimdScanner *scanner = &swimd_scanner_scanners[i];
-        if (scanner->scan_in_progress)
-            goto cleanup;
-    }
-
-    swimd_scanner_scanners_watch_end_tracking();
-
-    for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_refresh_path(&swimd_scanner_scanners[i]);
-    }
-
-cleanup:
-    swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-    swimd_log_append(SWIMD_INFO, "Refresh requested");
-    return 0;
-}
-
-static int swimd_scanner_lua_is_refreshing(lua_State *L) {
-    swimd_log_append(SWIMD_INFO, "Quering refresh status");
-    lua_newtable(L);
-
-    lua_pushstring(L, "details");
-    lua_newtable(L);
-    bool is_refreshing = false;
-    for (int i = 0; i < SCANNER_COUNT; i++) {
-        int scanner_refresh_count;
-        bool scanner_refreshing = swimd_scan_is_refreshing(&swimd_scanner_scanners[i], &scanner_refresh_count);
-        is_refreshing |= scanner_refreshing;
-
-        lua_pushnumber(L, i + 1);
-
-        lua_newtable(L);
-
-        lua_pushstring(L, "refreshing");
-        lua_pushboolean(L, scanner_refreshing);
-        lua_settable(L, -3);
-
-        lua_pushstring(L, "count");
-        lua_pushinteger(L, scanner_refresh_count);
-        lua_settable(L, -3);
-
-        lua_settable(L, -3);
-
-    }
-    lua_settable(L, -3);
-
-    lua_pushstring(L, "refreshing");
-    lua_pushboolean(L, is_refreshing);
-    lua_settable(L, -3);
-
-    swimd_log_append(SWIMD_INFO, "Refresh status received");
-    return 1;
-}
-
-static int swimd_scanner_lua_process_input(lua_State *L) {
-    swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-
-    const char *input = luaL_checkstring(L, 1);
-    int max_size = luaL_checknumber(L, 2);
-    int scanner_index = luaL_checknumber(L, 3);
-
-    SwimdScannerProcessInputResult result = {0};
-    SwimdScanner *scanner = &swimd_scanner_scanners[scanner_index];
-
-    swimd_scanner_scan_process_input(input, max_size, &result, scanner);
-    lua_newtable(L);
-    lua_pushstring(L, "scan_in_progress");
-    lua_pushboolean(L, result.scan_in_progress);
-    lua_settable(L, -3);
-
-    lua_pushstring(L, "scanned_items_count");
-    lua_pushinteger(L, result.scanned_items_count);
-    lua_settable(L, -3);
-
-    lua_pushstring(L, "items");
-    lua_newtable(L);
-    if (!result.scan_in_progress) {
-        for (int i = 0; i < result.items_length; i++) {
-            SwimdScannerProcessInputResultItem item = result.items[i];
-
-            lua_pushnumber(L, i + 1);
-
-            lua_newtable(L);
-            lua_pushstring(L, "name");
-            lua_pushstring(L, item.name);
-            lua_settable(L, -3);
-
-            lua_pushstring(L, "score");
-            lua_pushinteger(L, item.score);
-            lua_settable(L, -3);
-
-            lua_pushstring(L, "path");
-            lua_pushstring(L, item.path);
-            lua_settable(L, -3);
-
-            lua_settable(L, -3);
-        }
-    }
-    lua_settable(L, -3);
-
-    swimd_scanner_scan_process_input_free(&result);
-
-    swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-    return 1;
-}
-
-static int swimd_scanner_lua_sayhello(lua_State *L) {
-    const char *str = luaL_checkstring(L, 1);
-    char greeting[100] = "Hello, ";
-    strcat(greeting, str);
-    strcat(greeting, "!");
-    lua_pushstring(L, greeting);
-    return 1;
-}
-
-static int swimd_scanner_lua_log(lua_State *L) {
-    const char *str = luaL_checkstring(L, 1);
-    swimd_log_append(SWIMD_INFO, "[swimd-lua]: %s", str);
-    return 1;
-}
-
-EXPORT
-int luaopen_swimd(lua_State *L) {
-    static const luaL_Reg funcs[] = {
-        {"init", swimd_scanner_lua_init},
-        {"setup_workspace", swimd_scanner_lua_setup_workspace},
-        {"refresh_workspace", swimd_scanner_lua_refresh_workspace},
-        {"is_refreshing", swimd_scanner_lua_is_refreshing},
-        {"is_git_repo", swimd_scanner_lua_is_git_repo},
-        {"process_input", swimd_scanner_lua_process_input},
-        {"shutdown", swimd_scanner_lua_shutdown},
-        {"say_hello", swimd_scanner_lua_sayhello},
-        {"log", swimd_scanner_lua_log},
-
-        {NULL, NULL}
-    };
-    luaL_register(L, "swimd", funcs);
-
-    lua_pushinteger(L, SCANNER_FILES);
-    lua_setfield(L, -2, "SCANNER_FILES");
-
-    lua_pushinteger(L, SCANNER_GIT);
-    lua_setfield(L, -2, "SCANNER_GIT");
-
-    return 1;
-}
-
-static void swimd_scanner_scenario_reinit(void) {
-    for (;;) {
-        swimd_scanner_global_init("swimd.log");
-
-        swimd_scanner_scanners_glob_init();
-
-        SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-
-#ifdef _WIN32
-        swimd_scanner_scanners_setup_path("c:\\projects\\tmp_swimd");
-#else
-        swimd_scanner_scanners_setup_path("/home/ivan/Projects/tmp_swimd");
-#endif
-
-        SwimdScannerProcessInputResult result = {0};
-        swimd_scanner_scan_process_input("swimd", 10, &result, scanner);
-
-        if (result.scan_in_progress) {
-            printf("Scanning %d\n", result.scanned_items_count);
-        } else {
-            for (int i = 0; i < result.items_length; i++) {
-                SwimdScannerProcessInputResultItem item = result.items[i];
-
-                printf("name = %s, score = %d, path = %s\n",
-                        item.name,
-                        item.score,
-                        item.path);
-            }
-        }
-
-        swimd_scanner_scan_process_input_free(&result);
-        getchar();
-        swimd_scanner_shutdown();
-    }
-
-    printf("Over\n");
-}
-
-static void swimd_scanner_scenario_bench(void) {
-    swimd_scanner_global_init("swimd.log");
-    swimd_scanner_scanners_glob_init();
-
-    SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-
-    for (int i = 0; i < 10; i++) {
-
-        swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-#ifdef _WIN32
-        swimd_scanner_scanners_setup_path("c:\\Projects\\experiments");
-#else
-        swimd_scanner_scanners_setup_path("/home/ivan/Projects/chromium");
-#endif
-        swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-
-        int count = 0;
-        int it_count = 50;
-
-        while(1) {
-
-            double begin = swimd_scanner_now_us();
-
-            for (int i = 0; i < it_count; i++) {
-                SwimdScannerProcessInputResult result = {0};
-                swimd_scanner_scan_process_input("linux", 10, &result, scanner);
-                swimd_scanner_scan_process_input_free(&result);
-            }
-
-            double end = swimd_scanner_now_us();
-            double time_spent = (end - begin) / 1000;
-            printf("time spent %fms\n", time_spent / it_count);
-            SwimdScannerPhaseTimes *pt = &swimd_scanner_phase_times;
-            printf("prefilter & scores %.1fus, top %.1fus\n",
-                    pt->prefilter_and_scores_us / pt->count,
-                    pt->top_us / pt->count);
-            memset(pt, 0, sizeof(SwimdScannerPhaseTimes));
-        }
-    }
-    swimd_scanner_shutdown();
-
-    printf("Over\n");
-}
-
-static void swimd_scanner_scenario_scanning(void) {
-    swimd_scanner_global_init("swimd.log");
-    swimd_scanner_scanners_glob_init();
-
-    SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-
-    for (int i = 0; i < 10; i++) {
-
-        swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-#ifdef _WIN32
-        swimd_scanner_scanners_setup_path("c:\\Projects\\experiments");
-#else
-        swimd_scanner_scanners_setup_path("/home/ivan/Projects/chromium");
-#endif
-        swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-
-        int count = 0;
-
-        while(1) {
-
-            double begin = swimd_scanner_now_us();
-
-            SwimdScannerProcessInputResult result = {0};
-            swimd_scanner_scan_process_input("sound", 10, &result, scanner);
-
-            double end = swimd_scanner_now_us();
-
-            double time_spent = (end - begin) / 1000;
-            printf("time spent %fms\n", time_spent);
-
-            SwimdScannerPhaseTimes *pt = &swimd_scanner_phase_times;
-            printf("prefilter & scores %.1fus, top %.1fus\n",
-                    pt->prefilter_and_scores_us / pt->count,
-                    pt->top_us / pt->count);
-            memset(pt, 0, sizeof(SwimdScannerPhaseTimes));
-
-            if (result.scan_in_progress) {
-                printf("Scanning %d\n", result.scanned_items_count);
-            } else {
-                if (result.items_length == 0) {
-                    printf("nothing matches\n");
-                }
-
-                for (int i = 0; i < result.items_length; i++) {
-                    SwimdScannerProcessInputResultItem item = result.items[i];
-
-                    printf("name = %s, score = %d, path = %s\n",
-                            item.name,
-                            item.score,
-                            item.path);
-                }
-            }
-
-            swimd_scanner_scan_process_input_free(&result);
-            count++;
-            if (count % 20 == 0)
-                getchar();
-        }
-    }
-    swimd_scanner_shutdown();
-
-    printf("Over\n");
-}
-
-static int counter = 0;
-
-static void swimd_scanner_watch_demo_callback(bool *ignore, SwimdWatchOwner *owner) {
-    *ignore = true;
-    counter++;
-    if (counter == 3) {
-        *ignore = false;
-        swimd_are_set(&owner->notification_are_raised);
-    } else {
-        printf("event ignored\n");
-    }
-}
-
-void swimd_scanner_watch_owner_notification_demo_handler(SwimdWatchOwner *owner) {
-    swimd_watch_end_tracking(owner);
-    owner->watch_terminated = true;
-}
-
-int swimd_scanner_scenario_watch(void) {
-    swimd_log_init("watch.log");
-    SwimdWatchOwner owner = {0};
-
-    swimd_watch_owner_init(&owner);
-    swimd_watch_owner_begin_waiting(&owner,
-            swimd_scanner_watch_owner_notification_demo_handler);
-
-    if (!swimd_watch_init(&owner)) {
-        goto cleanup;
-    }
-#ifndef _WIN32
-    if (!swimd_watch_track_path(&owner,
-                "/home/ivan/Projects/experiments", true)) {
-        goto cleanup;
-    }
-#else
-    if (!swimd_watch_track_path(&owner,
-                "c:\\Projects\\experiments", true)) {
-        goto cleanup;
-    }
-#endif
-
-    swimd_watch_begin_tracking(&owner,
-            swimd_scanner_watch_demo_callback);
-
-    getchar();
-
-cleanup:
-    swimd_watch_owner_end(&owner);
-
-    swimd_log_free();
-    return 0;
-}
-
-int main() {
-    swimd_scanner_scenario_bench();
-    // swimd_scanner_scenario_scanning();
-    // swimd_scanner_scenario_reinit();
-    // swimd_scanner_scenario_watch();
-
-    return 0;
 }

@@ -24,7 +24,8 @@
     "build\\swimd_bitset.obj", \
     "build\\swimd_thread.obj", \
     "build\\swimd_log.obj", \
-    "build\\swimd_watch.obj"
+    "build\\swimd_watch.obj", \
+    "build\\swimd_scanner.obj"
 
 #ifdef DEBUG_MODE
 #define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
@@ -32,7 +33,12 @@
 #define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
 #endif // DEBUG_MODE
 
-#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC"
+
+#ifdef DEBUG_MODE
+#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2", "-g"
+#else // DEBUG_MODE
+#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2"
+#endif // DEBUG_MODE
 
 #define CC_INCLUDES \
     "-I/usr/include/lua5.1", \
@@ -44,7 +50,8 @@
     "build/swimd_bitset.o", \
     "build/swimd_thread.o", \
     "build/swimd_log.o", \
-    "build/swimd_watch.o"
+    "build/swimd_watch.o", \
+    "build/swimd_scanner.o"
 
 void cmd_add_debug_print_ifdef(Nob_Cmd *cmd) {
 #ifdef DEBUG_PRINT
@@ -106,13 +113,20 @@ int main(int argc, char **argv)
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");
+    nob_cmd_append(&cmd, CC_SUBMODULE_CFLAGS);
+    cmd_add_debug_print_ifdef(&cmd);
+    nob_cmd_append(&cmd, "-c", "swimd_scanner.c");
+    nob_cmd_append(&cmd, "-o", "build/swimd_scanner.o");
+    if (!nob_cmd_run(&cmd)) return 1;
+
+    nob_cmd_append(&cmd, "cc");
     nob_cmd_append(&cmd, "-shared", "-fPIC");
     nob_cmd_append(&cmd, CC_CFLAGS);
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, CC_INCLUDES);
     nob_cmd_append(&cmd, CC_LINKS);
     nob_cmd_append(&cmd, "-o", "build/swimd.so");
-    nob_cmd_append(&cmd, "swimd_scanner.c");
+    nob_cmd_append(&cmd, "swimd_lua.c");
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");
@@ -121,7 +135,7 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd, CC_INCLUDES);
     nob_cmd_append(&cmd, CC_LINKS);
     nob_cmd_append(&cmd, "-o", "build/swimd");
-    nob_cmd_append(&cmd, "swimd_scanner.c");
+    nob_cmd_append(&cmd, "swimd_cli.c");
     if (!nob_cmd_run(&cmd)) return 1;
 #else
     if (!nob_copy_file("libgit2\\git2.dll", "build\\git2.dll")) return 1;
@@ -164,8 +178,15 @@ int main(int argc, char **argv)
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
+    nob_cmd_append(&cmd, MSVC_SUBMODULE_CFLAGS);
     cmd_add_debug_print_ifdef(&cmd);
-    nob_cmd_append(&cmd, "swimd_scanner.c");
+    nob_cmd_append(&cmd, "/c", "swimd_scanner.c");
+    nob_cmd_append(&cmd, "/Fo:build\\swimd_scanner.obj");
+    if (!nob_cmd_run(&cmd)) return 1;
+
+    nob_cmd_append(&cmd, "cl");
+    cmd_add_debug_print_ifdef(&cmd);
+    nob_cmd_append(&cmd, "swimd_lua.c");
     nob_cmd_append(&cmd, "-LD", MSVC_CFLAGS);
 
 	nob_cmd_append(&cmd, MSVC_INCLUDES);
@@ -178,7 +199,7 @@ int main(int argc, char **argv)
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cl");
-    nob_cmd_append(&cmd, "swimd_scanner.c");
+    nob_cmd_append(&cmd, "swimd_cli.c");
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, MSVC_CFLAGS);
 
