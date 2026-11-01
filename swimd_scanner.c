@@ -77,7 +77,6 @@ SwimdScanner swimd_scanner_scanners[SCANNER_COUNT] = {0};
 SwimdScannerEstWrokers swimd_scanner_est_workers = {0};
 SwimdScannerPhaseTimes swimd_scanner_phase_times = {0};
 
-
 static void swimd_scanner_list_files(const char *root_dir,
         char *base_path,
         SwimdScannerFileList *file_list,
@@ -1504,8 +1503,6 @@ static void swimd_scanner_scanning_loop_impl(SwimdScanner *scanner) {
         swimd_scanner_start_scanning(scanner->scan_path,
                 scanner, scanner->scan_is_refreshing);
 
-        swimd_log_append(SWIMD_DEBUG, "stop scanning");
-
         scanner->scan_in_progress = false;
         scanner->scan_is_refreshing = false;
 
@@ -1700,9 +1697,7 @@ static void swimd_scanner_scan_setup_path(const char *scan_path, SwimdScanner *s
     scanner->scan_path = malloc((scan_path_len + 1) * sizeof(char));
     strcpy(scanner->scan_path, scan_path);
 
-        swimd_log_append(SWIMD_DEBUG, "start scanning");
     scanner->scan_in_progress = true;
-    swimd_log_append(SWIMD_DEBUG, scanner->scan_in_progress ? "checking: scan in progress" : "checking: scan completed");
     scanner->scan_files_count = 0;
     scanner->scan_files_refresh_count = 0;
     swimd_are_set(&scanner->scan_begin);
@@ -1898,7 +1893,6 @@ void swimd_scanner_scan_process_input(const char *input,
 
     result->scanned_items_count = scanner->scan_files_count;
 
-    swimd_log_append(SWIMD_DEBUG, scanner->scan_in_progress ? "checking: scan in progress" : "checking: scan completed");
     if (scanner->scan_in_progress && !scanner->scan_is_refreshing) {
         result->scan_in_progress = true;
     } else {

@@ -8,7 +8,7 @@
 #endif // DEBUG_MODE
 
 #define MSVC_CFLAGS "-nologo", "-MT", "-O2", "-ZI", "-std:c11", "-experimental:c11atomics"
-#define MSVC_SUBMODULE_CFLAGS "-nologo"
+#define MSVC_SUBMODULE_CFLAGS "-nologo", "-O2"
 
 #ifdef DEBUG_MODE
 #define MSVC_LFLAGS "-DEBUG"
@@ -37,7 +37,7 @@
 #ifdef DEBUG_MODE
 #define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2", "-g"
 #else // DEBUG_MODE
-#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2"
+#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2", "-O2"
 #endif // DEBUG_MODE
 
 #define CC_INCLUDES \

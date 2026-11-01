@@ -116,8 +116,6 @@ static void swimd_scanner_scenario_scanning(void) {
 
             double begin = swimd_scanner_now_us();
 
-            swimd_log_append(SWIMD_DEBUG, scanner->scan_in_progress ? "checking: scan in progress" : "checking: scan completed");
-
             SwimdScannerProcessInputResult result = {0};
             swimd_scanner_scan_process_input("sound", 10, &result, scanner);
 
@@ -151,7 +149,7 @@ static void swimd_scanner_scenario_scanning(void) {
 
             swimd_scanner_scan_process_input_free(&result);
             count++;
-            // if (count % 20 == 0)
+            if (count % 20 == 0)
                 getchar();
         }
     }
