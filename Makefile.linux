@@ -6,15 +6,27 @@ build/nob:
 main: build/nob
 	./build/nob
 
+main-mingw: build/nob
+	./build/nob -mingw
+
 clean:
-	rm -rf build/ 
+	rm -rf build/
 	rm -f *.log
 	mkdir build/
 	touch build/.gitkeep
 
-publish:
+publish-mingw: clean main-mingw
+	rm -rf release/win/*
+	cp build/swimd.dll release/win/
+	cp build/git2.dll release/win/
+	cp build/version release/win/
+	touch release/win/.gitkeep
+
+publish-linux: clean main
 	rm -rf release/linux/*
 	cp build/swimd.so release/linux/
 	cp build/libgit2.so release/linux/
 	cp build/version release/linux/
 	touch release/linux/.gitkeep
+
+publish: publish-linux publish-mingw

@@ -22,6 +22,7 @@
 #include "swimd_watch.h"
 #include "swimd_scanner.h"
 
+#undef ERROR
 #include "nob.h"
 
 #define SCANNER_GIT   0
@@ -1513,11 +1514,13 @@ static void swimd_scanner_scanning_loop_impl(SwimdScanner *scanner) {
 
 #ifdef _WIN32
 static DWORD WINAPI swimd_scanner_scanning_loop_git(LPVOID lp_param) {
+    (void)lp_param;
     swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_GIT]);
     return 0;
 }
 
 static DWORD WINAPI swimd_scanner_scanning_loop_files(LPVOID lp_param) {
+    (void)lp_param;
     swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_FILES]);
     return 0;
 }
