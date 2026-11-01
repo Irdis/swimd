@@ -557,7 +557,7 @@ static void swimd_scanner_list_files(const char *root_dir,
         SwimdWatchOwner *watch_owner,
         bool refreshing) {
     int root_dir_len = strlen(root_dir);
-    strncpy(base_path, root_dir, root_dir_len);
+    memcpy(base_path, root_dir, root_dir_len);
     base_path[root_dir_len] = '\0';
 
 #ifdef _WIN32
@@ -872,7 +872,7 @@ static void swimd_scanner_list_git(const char *root_dir,
     const char *repo_path = git_repository_workdir(repo);
     int repo_path_length = strlen(repo_path);
     repo_path_length--; // cut last slash
-    strncpy(base_path, repo_path, repo_path_length);
+    memcpy(base_path, repo_path, repo_path_length);
     base_path[repo_path_length] = '\0';
     swimd_scanner_list_git_normalize_base_path(base_path);
 

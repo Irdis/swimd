@@ -49,6 +49,9 @@ void swimd_log_append(SwimdLogLevel level, const char *msg, ...) {
         case SWIMD_DEBUG:
             level_str = "DEBUG";
             break;
+        default:
+            level_str = "?";
+            break;
     }
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
