@@ -28,16 +28,16 @@
     "build\\swimd_scanner.obj"
 
 #ifdef DEBUG_MODE
-#define CC_CFLAGS "-mavx2", "-O0", "-Wreturn-type", "-g"
+#define CC_CFLAGS "-O0", "-Wreturn-type", "-g"
 #else // DEBUG_MODE
-#define CC_CFLAGS "-mavx2", "-O2", "-Wreturn-type"
+#define CC_CFLAGS "-O2", "-Wreturn-type"
 #endif // DEBUG_MODE
 
 
 #ifdef DEBUG_MODE
-#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2", "-g"
+#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-g"
 #else // DEBUG_MODE
-#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-mavx2", "-O2"
+#define CC_SUBMODULE_CFLAGS "-Wall", "-Wextra", "-Wno-unused-function", "-fPIC", "-O2"
 #endif // DEBUG_MODE
 
 #define CC_INCLUDES \
@@ -113,7 +113,7 @@ int main(int argc, char **argv)
     if (!nob_cmd_run(&cmd)) return 1;
 
     nob_cmd_append(&cmd, "cc");
-    nob_cmd_append(&cmd, CC_SUBMODULE_CFLAGS);
+    nob_cmd_append(&cmd, CC_SUBMODULE_CFLAGS, "-mavx2");
     cmd_add_debug_print_ifdef(&cmd);
     nob_cmd_append(&cmd, "-c", "swimd_scanner.c");
     nob_cmd_append(&cmd, "-o", "build/swimd_scanner.o");
