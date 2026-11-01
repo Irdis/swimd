@@ -278,7 +278,14 @@ static double swimd_now_us(void) {
 }
 
 static void swimd_git2_init(void) {
-    git_libgit2_init();
+    int init_count = git_libgit2_init();
+
+    if (init_count < 0) {
+        const git_error *err = git_error_last();
+        swimd_log_append(SWIMD_ERR, "Failed to initialize libgit2: %s\n",
+                (err && err->message) ? err->message : "Unknown error");
+        exit(EXIT_FAILURE);
+    }
 }
 
 static int swimd_get_core_count(void) {
@@ -2349,7 +2356,7 @@ static void swimd_scenario_bench(void) {
 
             for (int i = 0; i < it_count; i++) {
                 SwimdProcessInputResult result = {0};
-                swimd_scan_process_input("sound", 10, &result, scanner);
+                swimd_scan_process_input("linux", 10, &result, scanner);
                 swimd_scan_process_input_free(&result);
             }
 
@@ -2487,7 +2494,7 @@ cleanup:
 
 int main() {
     swimd_scenario_bench();
-    swimd_scenario_scanning();
+    // swimd_scenario_scanning();
     // swimd_scenario_reinit();
     // swimd_scenario_watch();
 
