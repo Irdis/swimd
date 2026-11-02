@@ -78,6 +78,12 @@ SwimdScanner swimd_scanner_scanners[SCANNER_COUNT] = {0};
 SwimdScannerEstWrokers swimd_scanner_est_workers = {0};
 SwimdScannerPhaseTimes swimd_scanner_phase_times = {0};
 
+#ifdef _WIN32
+CRITICAL_SECTION swimd_scanner_scanners_request_lock;
+#else
+pthread_mutex_t swimd_scanner_scanners_request_lock;
+#endif
+
 static void swimd_scanner_list_files(const char *root_dir,
         char *base_path,
         SwimdScannerFileList *file_list,

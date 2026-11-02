@@ -48,14 +48,14 @@
     "-Ilualib/include", \
     "-Ilibgit2/include"
 #define MINGW_CC_LINKS  \
-    "-L", "lualib", "-llua51", \
-    "-L", "libgit2", "-lgit2", \
     "build/swimd_heap.o", \
     "build/swimd_bitset.o", \
     "build/swimd_thread.o", \
     "build/swimd_log.o", \
     "build/swimd_watch.o", \
-    "build/swimd_scanner.o"
+    "build/swimd_scanner.o", \
+    "-L", "lualib", "-llua51", \
+    "-L", "libgit2", "-lgit2"
 
 #define MINGW_OUT_LIB "swimd.dll"
 #define MINGW_OUT_EXE "swimd.exe"

@@ -157,9 +157,9 @@ extern SwimdScannerEstWrokers swimd_scanner_est_workers;
 extern SwimdScannerPhaseTimes swimd_scanner_phase_times;
 
 #ifdef _WIN32
-static CRITICAL_SECTION swimd_scanner_scanners_request_lock;
+extern CRITICAL_SECTION swimd_scanner_scanners_request_lock;
 #else
-static pthread_mutex_t swimd_scanner_scanners_request_lock;
+extern pthread_mutex_t swimd_scanner_scanners_request_lock;
 #endif
 
 double swimd_scanner_now_us(void);
