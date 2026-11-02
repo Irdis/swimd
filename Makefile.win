@@ -12,7 +12,7 @@ clean:
 	mkdir build
 	type nul > build\.gitkeep
 
-publish:
+publish: clean main
 	rmdir /s /q release\win
 	mkdir release\win
 	copy build\swimd.dll release\win\\
