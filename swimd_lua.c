@@ -80,11 +80,7 @@ static int swimd_scanner_lua_refresh_workspace(lua_State *L) {
             goto cleanup;
     }
 
-    swimd_scanner_scanners_watch_end_tracking();
-
-    for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scanner_scan_refresh_path(&swimd_scanner_scanners[i]);
-    }
+    swimd_scanner_scanners_refresh_path();
 
 cleanup:
     swimd_crit_unlock(&swimd_scanner_scanners_request_lock);

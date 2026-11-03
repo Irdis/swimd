@@ -1730,6 +1730,17 @@ static void swimd_scanner_scanners_cancel(void) {
     }
 }
 
+static void swimd_scanner_scanners_watch_end_tracking(void) {
+    for (int i = 0; i < SCANNER_COUNT; i++) {
+        SwimdScanner *scanner = &swimd_scanner_scanners[i];
+        SwimdWatchOwner *scanner_owner = scanner->watch_owner;
+        if (scanner_owner->has_watch) {
+            swimd_watch_end_tracking(scanner_owner);
+            scanner_owner->watch_terminated = true;
+        }
+    }
+}
+
 void swimd_scanner_scanners_setup_path(const char *scan_path) {
     swimd_scanner_scanners_cancel();
     swimd_scanner_scanners_watch_end_tracking();
@@ -1751,7 +1762,7 @@ bool swimd_scanner_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
     return res;
 }
 
-void swimd_scanner_scan_refresh_path(SwimdScanner *scanner) {
+static void swimd_scanner_scan_refresh_path(SwimdScanner *scanner) {
     if (scanner->scan_in_progress)
         return;
 
@@ -1763,16 +1774,13 @@ void swimd_scanner_scan_refresh_path(SwimdScanner *scanner) {
     swimd_are_wait(&scanner->scan_started);
 }
 
-void swimd_scanner_scanners_watch_end_tracking(void) {
+void swimd_scanner_scanners_refresh_path(void) {
+    swimd_scanner_scanners_watch_end_tracking();
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        SwimdScanner *scanner = &swimd_scanner_scanners[i];
-        SwimdWatchOwner *scanner_owner = scanner->watch_owner;
-        if (scanner_owner->has_watch) {
-            swimd_watch_end_tracking(scanner_owner);
-            scanner_owner->watch_terminated = true;
-        }
+        swimd_scanner_scan_refresh_path(&swimd_scanner_scanners[i]);
     }
 }
+
 
 static void swimd_scanner_watch_owner_notification_scanner_handler(SwimdWatchOwner *owner) {
     (void)owner;

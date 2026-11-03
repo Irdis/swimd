@@ -167,7 +167,7 @@ void swimd_scanner_global_init(const char *log_path);
 void swimd_scanner_scanners_glob_init(void);
 void swimd_scanner_shutdown(void);
 void swimd_scanner_scanners_setup_path(const char *scan_path);
-void swimd_scanner_scan_refresh_path(SwimdScanner *scanner);
+void swimd_scanner_scanners_refresh_path(void);
 bool swimd_scanner_scan_is_refreshing(SwimdScanner *scanner, int *read_count);
 void swimd_scanner_scan_process_input(const char *input,
         int max_size,
