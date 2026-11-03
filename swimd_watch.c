@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <time.h>
 #include <errno.h>
+#include <string.h>
+
 #ifdef _WIN32
     // todo: win
 #else
@@ -14,6 +16,8 @@
 #include "swimd_log.h"
 #include "swimd_thread.h"
 #include "swimd_watch.h"
+
+#define ll long long
 
 #define SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS 3000
 #define SWIMD_WATCH_SILENT_WINDOW_MS 3000
@@ -27,7 +31,7 @@ static void swimd_watch_notification_loop_impl(void *arg);
 
 #ifdef _WIN32
 
-static long long swimd_watch_get_current_time()
+static ll swimd_watch_get_current_time()
 {
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
@@ -36,7 +40,7 @@ static long long swimd_watch_get_current_time()
     time.LowPart = ft.dwLowDateTime;
     time.HighPart = ft.dwHighDateTime;
 
-    return (long long)(time.QuadPart / 10000);
+    return (ll)(time.QuadPart / 10000);
 }
 
 bool swimd_watch_init(SwimdWatchOwner *owner) {
@@ -92,6 +96,7 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
 
     BYTE buffer[4 * 1024];
     OVERLAPPED overlapped = {0};
+    bool waiting_dir_changes = false;
 
     overlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
 
@@ -102,23 +107,26 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
     };
 
     for (;;) {
-        ResetEvent(overlapped.hEvent);
+        if (!waiting_dir_changes) {
+            ResetEvent(overlapped.hEvent);
 
-        BOOL ok = ReadDirectoryChangesW(
-            watch->handle,
-            buffer,
-            sizeof(buffer),
-            TRUE, // recursive
-            FILE_NOTIFY_CHANGE_FILE_NAME |
-            FILE_NOTIFY_CHANGE_DIR_NAME,
-            NULL,
-            &overlapped,
-            NULL
-        );
+            BOOL ok = ReadDirectoryChangesW(
+                    watch->handle,
+                    buffer,
+                    sizeof(buffer),
+                    TRUE, // recursive
+                    FILE_NOTIFY_CHANGE_FILE_NAME |
+                    FILE_NOTIFY_CHANGE_DIR_NAME,
+                    NULL,
+                    &overlapped,
+                    NULL
+                    );
 
-        if (!ok) {
-            swimd_log_append(SWIMD_ERR, "ReadDirectoryChangesW failed: %lu\n", GetLastError());
-            break;
+            if (!ok) {
+                swimd_log_append(SWIMD_ERR, "ReadDirectoryChangesW failed: %lu\n", GetLastError());
+                break;
+            }
+            waiting_dir_changes = true;
         }
 
         DWORD result = WaitForMultipleObjects(
@@ -135,7 +143,7 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
 
             if (watch->modification_occured) {
 
-                long long cur_time = swimd_watch_get_current_time();
+                ll cur_time = swimd_watch_get_current_time();
                 if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
                     continue;
                 }
@@ -155,10 +163,6 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
             break;
         }
 
-        if (watch->modification_handled) {
-            continue; // waiting for shutdown
-        }
-
         if (result == WAIT_OBJECT_0) {
             DWORD bytes;
 
@@ -167,18 +171,31 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
                 swimd_log_append(SWIMD_ERR, "GetOverlappedResult failed: %lu\n", GetLastError());
                 break;
             }
+            waiting_dir_changes = false;
+
+            if (watch->modification_handled) {
+                waiting_dir_changes = true;
+                continue; // waiting for shutdown
+            }
+
 
             if (bytes <= 0) {
                 continue;
             }
 
-            long long cur_time = swimd_watch_get_current_time();
+            ll cur_time = swimd_watch_get_current_time();
             if (cur_time - watch->init_time_ms < SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS) {
                 continue;
             }
             watch->modification_occured = true;
             watch->modification_time_ms = cur_time;
         }
+    }
+
+    if (waiting_dir_changes) {
+        DWORD bytes;
+        CancelIoEx(watch->handle, &overlapped);
+        GetOverlappedResult(watch->handle, &overlapped, &bytes, TRUE);
     }
 
     CloseHandle(overlapped.hEvent);
@@ -201,11 +218,11 @@ static void swimd_watch_send_shutdown(SwimdWatch *watch) {
 typedef struct inotify_event inotify_event;
 static void* swimd_watch_watch_loop(void *arg);
 
-static long long swimd_watch_get_current_time() {
+static ll swimd_watch_get_current_time() {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
 
-    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return (ll)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 bool swimd_watch_init(SwimdWatchOwner *owner) {
@@ -263,6 +280,23 @@ static void swimd_watch_send_shutdown(SwimdWatch *watch) {
     write(watch->shutdown, &value, sizeof(value));
 }
 
+static bool swimd_watch_drain_event_buf(char *buf, size_t buf_size, int handle) {
+    ssize_t size;
+    while ((size = read(handle, buf, buf_size)) > 0) {}
+
+    if (size < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            swimd_log_append(SWIMD_ERR, "Fatal read error on watch handle: %s (errno: %d)",
+                    strerror(errno), errno);
+            return false;
+        }
+    } else if (size == 0) {
+        swimd_log_append(SWIMD_ERR, "Watch handle closed");
+        return false;
+    }
+    return true;
+}
+
 static void* swimd_watch_watch_loop(void *arg) {
     SwimdWatchOwner *owner = (SwimdWatchOwner*)arg;
     SwimdWatch *watch = owner->watch;
@@ -275,10 +309,10 @@ static void* swimd_watch_watch_loop(void *arg) {
     };
 
     char buf[4096];
-    ssize_t size;
 
     while (1) {
         int ret = poll(fds, fds_len, SWIMD_WATCH_POLL_INTERVAL_MS);
+        swimd_log_append(SWIMD_DEBUG, "beet");
         if (ret < 0) {
             if (errno == EINTR)
                 continue;
@@ -292,7 +326,7 @@ static void* swimd_watch_watch_loop(void *arg) {
 
             if (watch->modification_occured) {
 
-                long long cur_time = swimd_watch_get_current_time();
+                ll cur_time = swimd_watch_get_current_time();
                 if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
                     continue;
                 }
@@ -301,7 +335,8 @@ static void* swimd_watch_watch_loop(void *arg) {
                 if (ignore) {
                     watch->modification_occured = false;
                     watch->modification_time_ms = 0;
-                } else  {
+                } else {
+                    swimd_log_append(SWIMD_DEBUG, "set watch->modification_handled");
                     watch->modification_handled = true;
                 }
             }
@@ -314,21 +349,24 @@ static void* swimd_watch_watch_loop(void *arg) {
             break;
         }
 
-        if (watch->modification_handled) {
-            continue; // waiting for shutdown
-        }
-
         if (fds[0].revents & POLLIN) {
-            size = read(watch->handle, buf, sizeof(buf));
-            if (size <= 0)
+            // need to throw away event, otherwise event in handle will spin the loop
+            if (!swimd_watch_drain_event_buf(buf, sizeof(buf), watch->handle)) {
                 break;
+            }
 
-            long long cur_time = swimd_watch_get_current_time();
+            if (watch->modification_handled) {
+                continue; // waiting for shutdown
+            }
+
+            ll cur_time = swimd_watch_get_current_time();
             if (cur_time - watch->init_time_ms < SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS) {
                 continue;
             }
             watch->modification_occured = true;
             watch->modification_time_ms = cur_time;
+        } else {
+            swimd_log_append(SWIMD_WARN, "Unrecognized event in watch loop");
         }
     }
     swimd_log_append(SWIMD_INFO, "Watch loop ended");
