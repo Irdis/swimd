@@ -312,7 +312,6 @@ static void* swimd_watch_watch_loop(void *arg) {
 
     while (1) {
         int ret = poll(fds, fds_len, SWIMD_WATCH_POLL_INTERVAL_MS);
-        swimd_log_append(SWIMD_DEBUG, "beet");
         if (ret < 0) {
             if (errno == EINTR)
                 continue;
@@ -336,7 +335,6 @@ static void* swimd_watch_watch_loop(void *arg) {
                     watch->modification_occured = false;
                     watch->modification_time_ms = 0;
                 } else {
-                    swimd_log_append(SWIMD_DEBUG, "set watch->modification_handled");
                     watch->modification_handled = true;
                 }
             }
