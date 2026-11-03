@@ -42,8 +42,13 @@
 #define PROFILE_CHAR_COUNT 256
 #define PREFILTER_THRESHOLD 0.7
 #define EST_MIN_TRIGGER_FILE_COUNT 5000
-#define EST_PACK_VEC_SIZE 30
-// #define EST_PACK_VEC_SIZE 1000
+
+// should be aligned with the fact that prefilter works in 64 bit units
+// EST_PACK_VEC_SIZE * LANES_COUNT_SHORT % 64 == 0
+#define EST_PACK_VEC_SIZE 32
+_Static_assert((EST_PACK_VEC_SIZE * LANES_COUNT_SHORT) % 64 == 0,
+        "pack must cover whole bitset words");
+
 #define EST_PARALLEL_ENABLED 1
 #define ERROR_THRESHOLD 0.2
 #define LEN_DIFF_ERROR_COST 0.3
@@ -956,6 +961,7 @@ static void swimd_scanner_prep_files_vec(SwimdScanner *scanner) {
 
     int profile_char_vec_length = LANES_COUNT_SHORT * CEIL_DIV(files_length, LANES_COUNT_SHORT);
     short *files_profile_vec = malloc(PROFILE_CHAR_COUNT * profile_char_vec_length * sizeof(short));
+    memset(files_profile_vec, 0, PROFILE_CHAR_COUNT * profile_char_vec_length * sizeof(short));
 
     for (int i = 0; i < files_length; i++) {
 
@@ -1692,9 +1698,6 @@ static void swimd_scanner_scanners_glob_free(void) {
 }
 
 static void swimd_scanner_scan_setup_path(const char *scan_path, SwimdScanner *scanner) {
-    scanner->scan_cancelled_request = true;
-    swimd_mre_wait(&scanner->scan_finished);
-    scanner->scan_cancelled_request = false;
 
     if (scanner->scan_path != NULL) {
         swimd_scan_path_free(scanner);
@@ -1714,7 +1717,23 @@ static void swimd_scanner_scan_setup_path(const char *scan_path, SwimdScanner *s
     swimd_are_wait(&scanner->scan_started);
 }
 
+
+static void swimd_scanner_scan_cancel(SwimdScanner *scanner) {
+    scanner->scan_cancelled_request = true;
+    swimd_mre_wait(&scanner->scan_finished);
+    scanner->scan_cancelled_request = false;
+}
+
+static void swimd_scanner_scanners_cancel(void) {
+    for (int i = 0; i < SCANNER_COUNT; i++) {
+        swimd_scanner_scan_cancel(&swimd_scanner_scanners[i]);
+    }
+}
+
 void swimd_scanner_scanners_setup_path(const char *scan_path) {
+    swimd_scanner_scanners_cancel();
+    swimd_scanner_scanners_watch_end_tracking();
+
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scanner_scan_setup_path(scan_path, &swimd_scanner_scanners[i]);
     }

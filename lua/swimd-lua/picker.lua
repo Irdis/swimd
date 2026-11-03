@@ -220,7 +220,7 @@ M.handle_events = function ()
             vim.cmd.stopinsert()
             M.close_all()
             if M.matches[M.selected] and M.matches[M.selected].path then
-                vim.cmd('e ' .. M.matches[M.selected].path)
+                vim.cmd('e ' .. vim.fn.fnameescape(M.matches[M.selected].path))
             end
         end
     })

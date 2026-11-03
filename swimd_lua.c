@@ -53,7 +53,6 @@ static int swimd_scanner_lua_setup_workspace(lua_State *L) {
 
     swimd_crit_lock(&swimd_scanner_scanners_request_lock);
 
-    swimd_scanner_scanners_watch_end_tracking();
     swimd_scanner_scanners_setup_path(workspace);
 
     swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
