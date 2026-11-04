@@ -8,13 +8,7 @@
 
 static FILE *swimd_log = {0};
 static bool swimd_log_enabled = false;
-
-#ifdef _WIN32
-static CRITICAL_SECTION scan_log_lock;
-#else
-static pthread_mutex_t scan_log_lock;
-#endif
-
+static SwimdCritSection scan_log_lock;
 
 void swimd_log_init(const char *log_path) {
     if (log_path == NULL) {
