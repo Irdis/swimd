@@ -99,19 +99,12 @@ typedef struct {
     short *gap_distr_fun;
     short *gap_distr_sum;
 
-#ifdef _WIN32
-    HANDLE scan_thread;
-    HANDLE scan_begin;
-    HANDLE scan_started;
-    HANDLE scan_finished;
-    CRITICAL_SECTION scan_state_swap;
-#else
-    pthread_t scan_thread;
+    SwimdThread scan_thread;
     SwimdAutoResetEvent scan_begin;
     SwimdAutoResetEvent scan_started;
     SwimdManualResetEvent scan_finished;
-    pthread_mutex_t scan_state_swap;
-#endif
+    SwimdCritSection scan_state_swap;
+
     volatile bool scan_terminate_request;
     volatile bool scan_cancelled_request;
     volatile bool scan_in_progress;
@@ -129,15 +122,11 @@ typedef struct {
 typedef struct {
     bool enabled;
     int est_threads_count;
-#ifdef _WIN32
-    HANDLE* est_begins;
-    HANDLE* est_ends;
-    HANDLE* est_threads;
-#else
+
     SwimdAutoResetEvent* est_begins;
     SwimdAutoResetEvent* est_ends;
-    pthread_t* est_threads;
-#endif
+    SwimdThread* est_threads;
+
     volatile bool est_terminate_request;
 
     int total_task_count;
@@ -155,12 +144,7 @@ extern bool swimd_scanner_initialized;
 extern SwimdScanner swimd_scanner_scanners[SCANNER_COUNT];
 extern SwimdScannerEstWrokers swimd_scanner_est_workers;
 extern SwimdScannerPhaseTimes swimd_scanner_phase_times;
-
-#ifdef _WIN32
-extern CRITICAL_SECTION swimd_scanner_scanners_request_lock;
-#else
-extern pthread_mutex_t swimd_scanner_scanners_request_lock;
-#endif
+extern SwimdCritSection swimd_scanner_scanners_request_lock;
 
 double swimd_scanner_now_us(void);
 void swimd_scanner_global_init(const char *log_path);

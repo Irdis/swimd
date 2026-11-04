@@ -82,12 +82,7 @@ bool swimd_scanner_initialized = false;
 SwimdScanner swimd_scanner_scanners[SCANNER_COUNT] = {0};
 SwimdScannerEstWrokers swimd_scanner_est_workers = {0};
 SwimdScannerPhaseTimes swimd_scanner_phase_times = {0};
-
-#ifdef _WIN32
-CRITICAL_SECTION swimd_scanner_scanners_request_lock;
-#else
-pthread_mutex_t swimd_scanner_scanners_request_lock;
-#endif
+SwimdCritSection swimd_scanner_scanners_request_lock;
 
 static void swimd_scanner_list_files(const char *root_dir,
         char *base_path,
@@ -109,13 +104,8 @@ static void swimd_scanner_simd_scores_flat(SwimdScanner *scanner,
 static void swimd_scanner_top_scores_flat(SwimdScanner *scanner,
         int file_vec_start, int file_vec_count, int heap_ind);
 
-#ifdef _WIN32
-static DWORD WINAPI swimd_scanner_scanning_loop_git(LPVOID lp_param);
-static DWORD WINAPI swimd_scanner_scanning_loop_files(LPVOID lp_param);
-#else
-static void* swimd_scanner_scanning_loop_git(void *lp_param);
-static void* swimd_scanner_scanning_loop_files(void *lp_param);
-#endif
+static SwimdThreadCallbackResult SwimdThreadCallbackSpecifier swimd_scanner_scanning_loop_git(SwimdThreadCallbackArg lp_param);
+static SwimdThreadCallbackResult SwimdThreadCallbackSpecifier swimd_scanner_scanning_loop_files(SwimdThreadCallbackArg lp_param);
 
 static void swimd_scanner_watch_owner_notification_scanner_handler(SwimdWatchOwner *owner);
 
@@ -191,18 +181,10 @@ static void swimd_scanner_worker_loop_impl(int thread_index) {
     }
 }
 
-#ifdef _WIN32
-static DWORD WINAPI swimd_scanner_worker_loop(LPVOID lp_param) {
+static SwimdThreadCallbackResult SwimdThreadCallbackSpecifier swimd_scanner_worker_loop(SwimdThreadCallbackArg lp_param) {
     swimd_scanner_worker_loop_impl((int)(intptr_t)lp_param);
     return 0;
 }
-
-#else
-static void* swimd_scanner_worker_loop(void *lp_param) {
-    swimd_scanner_worker_loop_impl((int)(intptr_t)lp_param);
-    return NULL;
-}
-#endif
 
 static void swimd_scanner_est_workers_init(void) {
     int core_count = swimd_scanner_get_core_count();
@@ -214,15 +196,9 @@ static void swimd_scanner_est_workers_init(void) {
     int workers_count = core_count - 1;
     swimd_log_append(SWIMD_INFO, "Starting est workers, workers_count=%d", workers_count);
 
-#ifdef _WIN32
-    swimd_scanner_est_workers.est_begins = malloc(workers_count * sizeof(HANDLE));
-    swimd_scanner_est_workers.est_ends = malloc(workers_count * sizeof(HANDLE));
-    swimd_scanner_est_workers.est_threads = malloc(workers_count * sizeof(HANDLE));
-#else
     swimd_scanner_est_workers.est_begins = malloc(workers_count * sizeof(SwimdAutoResetEvent));
     swimd_scanner_est_workers.est_ends = malloc(workers_count * sizeof(SwimdAutoResetEvent));
-    swimd_scanner_est_workers.est_threads = malloc(workers_count * sizeof(pthread_t));
-#endif
+    swimd_scanner_est_workers.est_threads = malloc(workers_count * sizeof(SwimdThread));
     swimd_scanner_est_workers.est_terminate_request = false;
     swimd_scanner_est_workers.est_threads_count = workers_count;
     swimd_scanner_est_workers.total_task_count = -1;
@@ -231,17 +207,11 @@ static void swimd_scanner_est_workers_init(void) {
     swimd_scanner_est_workers.enabled = true;
 
     for (int i = 0; i < workers_count; i++) {
-#ifdef _WIN32
-        HANDLE* ev_b;
-        HANDLE* ev_e;
-        HANDLE* tr;
-        LPVOID thread_index = (LPVOID)(intptr_t)i;
-#else
         SwimdAutoResetEvent* ev_b;
         SwimdAutoResetEvent* ev_e;
-        pthread_t* tr;
-        void* thread_index = (void*)(intptr_t)i;
-#endif
+        SwimdThread* tr;
+        SwimdThreadCallbackArg thread_index = (SwimdThreadCallbackArg)(intptr_t)i;
+
         ev_b = &swimd_scanner_est_workers.est_begins[i];
         ev_e = &swimd_scanner_est_workers.est_ends[i];
         tr = &swimd_scanner_est_workers.est_threads[i];
@@ -1524,31 +1494,17 @@ static void swimd_scanner_scanning_loop_impl(SwimdScanner *scanner) {
     swimd_log_append(SWIMD_INFO, "Scanning loop exit");
 }
 
-#ifdef _WIN32
-static DWORD WINAPI swimd_scanner_scanning_loop_git(LPVOID lp_param) {
+static SwimdThreadCallbackResult SwimdThreadCallbackSpecifier swimd_scanner_scanning_loop_git(SwimdThreadCallbackArg lp_param) {
     (void)lp_param;
     swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_GIT]);
     return 0;
 }
 
-static DWORD WINAPI swimd_scanner_scanning_loop_files(LPVOID lp_param) {
+static SwimdThreadCallbackResult SwimdThreadCallbackSpecifier swimd_scanner_scanning_loop_files(SwimdThreadCallbackArg lp_param) {
     (void)lp_param;
     swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_FILES]);
     return 0;
 }
-#else
-static void* swimd_scanner_scanning_loop_git(void *lp_param) {
-    (void)lp_param;
-    swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_GIT]);
-    return NULL;
-}
-
-static void* swimd_scanner_scanning_loop_files(void *lp_param) {
-    (void)lp_param;
-    swimd_scanner_scanning_loop_impl(&swimd_scanner_scanners[SCANNER_FILES]);
-    return NULL;
-}
-#endif
 
 static void swimd_scan_thread_init(SwimdScanner *scanner) {
     swimd_are_init(&scanner->scan_begin, false);

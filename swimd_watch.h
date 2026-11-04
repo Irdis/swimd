@@ -12,12 +12,12 @@ typedef struct {
 #ifdef _WIN32
     HANDLE handle;
     HANDLE shutdown;
-    HANDLE watch_loop;
 #else
     int handle;
     int shutdown;
-    pthread_t watch_loop;
 #endif
+
+    SwimdThread watch_loop;
 
     swimd_watch_callback callback;
 
@@ -31,15 +31,9 @@ typedef struct SwimdWatchOwner {
     volatile bool watch_terminated;
     volatile bool owner_terminating;
 
-#ifdef _WIN32
-    HANDLE notification_thread;
-    CRITICAL_SECTION notification_lock;
-    HANDLE notification_are_raised;
-#else
-    pthread_t notification_thread;
-    pthread_mutex_t notification_lock;
+    SwimdThread notification_thread;
+    SwimdCritSection notification_lock;
     SwimdAutoResetEvent notification_are_raised;
-#endif
 
     swimd_watch_notification_handler notification_handler;
 
