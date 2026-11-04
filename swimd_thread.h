@@ -15,7 +15,7 @@
 #define SwimdCritSection CRITICAL_SECTION
 #define SwimdAutoResetEvent HANDLE
 #define SwimdManualResetEvent HANDLE
-#define SwimdThreadCallbackResult DWORD WINAPI
+#define SwimdThreadCallbackResult DWORD
 #define SwimdThreadCallbackSpecifier WINAPI
 #define SwimdThreadCallbackArg LPVOID
 
