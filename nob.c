@@ -123,6 +123,14 @@ void cmd_add_o_lib(Nob_Cmd *cmd, SwimdNobOptions *opt) {
     }
 }
 
+void cmd_add_o_test_exe(Nob_Cmd *cmd, SwimdNobOptions *opt) {
+    if (opt->mingw_compiler) {
+        nob_cmd_append(cmd, "-o", "build/test_"MINGW_OUT_EXE);
+    } else {
+        nob_cmd_append(cmd, "-o", "build/test_"CC_OUT_EXE);
+    }
+}
+
 void cmd_add_o_exe(Nob_Cmd *cmd, SwimdNobOptions *opt) {
     if (opt->mingw_compiler) {
         nob_cmd_append(cmd, "-o", "build/"MINGW_OUT_EXE);
@@ -153,6 +161,26 @@ void parse_options(SwimdNobOptions *opt, int argc, char **argv) {
     opt->is_linux = true;
 #endif
 
+}
+
+bool build_tests(Nob_Cmd *cmd, SwimdNobOptions *opt) {
+    cmd_add_cc(cmd, opt);
+    nob_cmd_append(cmd, CC_SUBMODULE_CFLAGS);
+    cmd_add_debug_print_ifdef(cmd);
+    nob_cmd_append(cmd, "-c", "tests/swimd_cunit.c");
+    nob_cmd_append(cmd, "-o", "build/swimd_cunit.o");
+    if (!nob_cmd_run(cmd)) return false;
+
+    cmd_add_cc(cmd, opt);
+    nob_cmd_append(cmd, CC_CFLAGS);
+    cmd_add_debug_print_ifdef(cmd);
+    nob_cmd_append(cmd, "build/swimd_cunit.o");
+    cmd_add_cc_includes(cmd, opt);
+    cmd_add_o_test_exe(cmd, opt);
+    nob_cmd_append(cmd, "tests/swimd_tests.c");
+    cmd_add_cc_links(cmd, opt);
+    if (!nob_cmd_run(cmd)) return false;
+    return true;
 }
 
 int main(int argc, char **argv)
@@ -215,6 +243,8 @@ int main(int argc, char **argv)
         nob_cmd_append(&cmd, "-c", "swimd_scanner.c");
         nob_cmd_append(&cmd, "-o", "build/swimd_scanner.o");
         if (!nob_cmd_run(&cmd)) return 1;
+
+        if (!build_tests(&cmd, &opt)) return 1;
 
         cmd_add_cc(&cmd, &opt);
         nob_cmd_append(&cmd, "-shared", "-fPIC");

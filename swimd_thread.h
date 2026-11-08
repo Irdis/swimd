@@ -7,6 +7,7 @@
 #else
     #include <pthread.h>
     #include <dirent.h>
+    #include <time.h>
 #endif
 
 #ifdef _WIN32
@@ -63,5 +64,7 @@ void swimd_mre_wait(SwimdManualResetEvent *ev);
 void swimd_mre_set(SwimdManualResetEvent *ev);
 void swimd_mre_reset(SwimdManualResetEvent *ev);
 void swimd_mre_close(SwimdManualResetEvent *ev);
+
+void swimd_thread_sleep(int milliseconds);
 
 #endif // SWIMD_THREAD_H

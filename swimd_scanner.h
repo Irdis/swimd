@@ -15,7 +15,7 @@
 #define SCANNER_FILES 1
 #define SCANNER_COUNT 2
 
-typedef struct  {
+typedef struct {
     char *path;
     char *name;
     int score;

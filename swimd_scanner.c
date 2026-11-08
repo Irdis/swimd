@@ -1506,7 +1506,7 @@ static SwimdThreadCallbackResult SwimdThreadCallbackSpecifier swimd_scanner_scan
     return 0;
 }
 
-static void swimd_scan_thread_init(SwimdScanner *scanner) {
+static void swimd_scanner_scan_thread_init(SwimdScanner *scanner) {
     swimd_are_init(&scanner->scan_begin, false);
     swimd_are_init(&scanner->scan_started, false);
     swimd_mre_init(&scanner->scan_finished, true);
@@ -1516,7 +1516,7 @@ static void swimd_scan_thread_init(SwimdScanner *scanner) {
     swimd_crit_init(&scanner->scan_state_swap);
 }
 
-static void swimd_d_vec_unit_init(SwimdScanner *scanner, int d_ind) {
+static void swimd_scanner_d_vec_unit_init(SwimdScanner *scanner, int d_ind) {
     short* d_unit = malloc(MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
     memset(d_unit, 0, MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
     for (int i = 1; i < MAX_PATH_LENGTH; i++) {
@@ -1536,22 +1536,22 @@ static void swimd_d_vec_unit_init(SwimdScanner *scanner, int d_ind) {
     scanner->d_vec[d_ind] = d_unit;
 }
 
-static void swimd_d_vec_init(SwimdScanner *scanner, int count) {
+static void swimd_scanner_d_vec_init(SwimdScanner *scanner, int count) {
     scanner->d_vec_count = count;
     scanner->d_vec = malloc(count * sizeof(short*));
     for (int i = 0; i < count; i++) {
-        swimd_d_vec_unit_init(scanner, i);
+        swimd_scanner_d_vec_unit_init(scanner, i);
     }
 }
 
-static void swimd_d_vec_free(SwimdScanner *scanner) {
+static void swimd_scanner_d_vec_free(SwimdScanner *scanner) {
     for (int i = 0; i < scanner->d_vec_count; i++) {
         free(scanner->d_vec[i]);
     }
     free(scanner->d_vec);
 }
 
-static void swimd_gap_distr_fun_custom(short *arr, int n) {
+static void swimd_scanner_gap_distr_fun_custom(short *arr, int n) {
     int gap_ind = 0;
     int ind = 0;
     for (;;) {
@@ -1572,46 +1572,46 @@ static void swimd_gap_distr_fun_custom(short *arr, int n) {
     }
 }
 
-static void swimd_gap_distr_fun(short *arr, int n) {
-    swimd_gap_distr_fun_custom(arr, n);
+static void swimd_scanner_gap_distr_fun(short *arr, int n) {
+    swimd_scanner_gap_distr_fun_custom(arr, n);
 }
 
-static void swimd_gap_distr_sum(short *sum, short *arr, int n) {
+static void swimd_scanner_gap_distr_sum(short *sum, short *arr, int n) {
     sum[0] = 0;
     for (int i = 1; i < n; i++) {
         sum[i] = sum[i - 1] + arr[i - 1];
     }
 }
 
-static void swimd_gap_distr_init(SwimdScanner *scanner) {
+static void swimd_scanner_gap_distr_init(SwimdScanner *scanner) {
     scanner->gap_distr_fun = malloc(MAX_PATH_LENGTH * sizeof(short));
     scanner->gap_distr_sum = malloc(MAX_PATH_LENGTH * sizeof(short));
-    swimd_gap_distr_fun(scanner->gap_distr_fun, MAX_PATH_LENGTH);
-    swimd_gap_distr_sum(scanner->gap_distr_sum, scanner->gap_distr_fun, MAX_PATH_LENGTH);
+    swimd_scanner_gap_distr_fun(scanner->gap_distr_fun, MAX_PATH_LENGTH);
+    swimd_scanner_gap_distr_sum(scanner->gap_distr_sum, scanner->gap_distr_fun, MAX_PATH_LENGTH);
 }
 
-static void swimd_gap_distr_free(SwimdScanner *scanner) {
+static void swimd_scanner_gap_distr_free(SwimdScanner *scanner) {
     free(scanner->gap_distr_fun);
     free(scanner->gap_distr_sum);
 }
 
-static void swimd_scan_glob_init(SwimdScanner *scanner) {
-    swimd_gap_distr_init(scanner);
-    swimd_d_vec_init(scanner, swimd_scanner_est_workers.est_threads_count + 1);
-    swimd_scan_thread_init(scanner);
+static void swimd_scanner_scan_glob_init(SwimdScanner *scanner) {
+    swimd_scanner_gap_distr_init(scanner);
+    swimd_scanner_d_vec_init(scanner, swimd_scanner_est_workers.est_threads_count + 1);
+    swimd_scanner_scan_thread_init(scanner);
 }
 
 void swimd_scanner_scanners_glob_init(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_glob_init(&swimd_scanner_scanners[i]);
+        swimd_scanner_scan_glob_init(&swimd_scanner_scanners[i]);
     }
 }
 
-static void swimd_scan_path_free(SwimdScanner *scanner) {
+static void swimd_scanner_scan_path_free(SwimdScanner *scanner) {
     free(scanner->scan_path);
 }
 
-static void swimd_scan_thread_stop(SwimdScanner *scanner) {
+static void swimd_scanner_scan_thread_stop(SwimdScanner *scanner) {
     scanner->scan_cancelled_request = true;
     swimd_mre_wait(&scanner->scan_finished);
     scanner->scan_cancelled_request = false;
@@ -1623,7 +1623,7 @@ static void swimd_scan_thread_stop(SwimdScanner *scanner) {
     scanner->scan_terminated = true;
 
     if (scanner->scan_path != NULL) {
-        swimd_scan_path_free(scanner);
+        swimd_scanner_scan_path_free(scanner);
         swimd_scanner_free(scanner);
         scanner->scan_path = NULL;
     }
@@ -1638,25 +1638,25 @@ static void swimd_scan_thread_stop(SwimdScanner *scanner) {
 
 static void swimd_scanner_scanners_thread_stop(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_thread_stop(&swimd_scanner_scanners[i]);
+        swimd_scanner_scan_thread_stop(&swimd_scanner_scanners[i]);
     }
 }
 
-static void swimd_scan_glob_free(SwimdScanner *scanner) {
-    swimd_gap_distr_free(scanner);
-    swimd_d_vec_free(scanner);
+static void swimd_scanner_scan_glob_free(SwimdScanner *scanner) {
+    swimd_scanner_gap_distr_free(scanner);
+    swimd_scanner_d_vec_free(scanner);
 }
 
 static void swimd_scanner_scanners_glob_free(void) {
     for (int i = 0; i < SCANNER_COUNT; i++) {
-        swimd_scan_glob_free(&swimd_scanner_scanners[i]);
+        swimd_scanner_scan_glob_free(&swimd_scanner_scanners[i]);
     }
 }
 
 static void swimd_scanner_scan_setup_path(const char *scan_path, SwimdScanner *scanner) {
 
     if (scanner->scan_path != NULL) {
-        swimd_scan_path_free(scanner);
+        swimd_scanner_scan_path_free(scanner);
         swimd_scanner_free(scanner);
         scanner->scan_path = NULL;
     }

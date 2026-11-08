@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include "swimd_thread.h"
 
+extern int swimd_watch_start_handle_events_from_ms;
+extern int swimd_watch_silent_window_ms;
+extern int swimd_watch_poll_interval_ms;
+
 typedef struct SwimdWatchOwner SwimdWatchOwner;
 typedef void (*swimd_watch_callback)(bool *ignore, SwimdWatchOwner *owner);
 typedef void (*swimd_watch_notification_handler)(SwimdWatchOwner *owner);

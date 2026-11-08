@@ -72,6 +72,10 @@ void swimd_mre_reset(HANDLE *ev) {
 void swimd_mre_close(HANDLE *ev) {
     CloseHandle(*ev);
 }
+
+void swimd_thread_sleep(int milliseconds) {
+    Sleep(milliseconds);
+}
 #else
 typedef void* (*swimd_thread_callback)(void*);
 
@@ -162,5 +166,13 @@ void swimd_mre_reset(SwimdManualResetEvent *ev) {
 void swimd_mre_close(SwimdManualResetEvent *ev) {
     pthread_mutex_destroy(&ev->mutex);
     pthread_cond_destroy(&ev->condition);
+}
+
+void swimd_thread_sleep(int milliseconds) {
+    struct timespec time = {
+        .tv_sec = (milliseconds) / 1000,
+        .tv_nsec = ((milliseconds) % 1000) * 1000000L
+    };
+    nanosleep(&time, NULL);
 }
 #endif

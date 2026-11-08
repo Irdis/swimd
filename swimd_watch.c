@@ -27,6 +27,10 @@
 #define INVALID_HANDLE_VALUE -1
 #endif
 
+int swimd_watch_start_handle_events_from_ms = SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS;
+int swimd_watch_silent_window_ms = SWIMD_WATCH_SILENT_WINDOW_MS;
+int swimd_watch_poll_interval_ms = SWIMD_WATCH_POLL_INTERVAL_MS;
+
 static void swimd_watch_notification_loop_impl(void *arg);
 
 #ifdef _WIN32
@@ -119,8 +123,7 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
                     FILE_NOTIFY_CHANGE_DIR_NAME,
                     NULL,
                     &overlapped,
-                    NULL
-                    );
+                    NULL);
 
             if (!ok) {
                 swimd_log_append(SWIMD_ERR, "ReadDirectoryChangesW failed: %lu\n", GetLastError());
@@ -133,7 +136,7 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
             handles_count,
             handles,
             FALSE,
-            SWIMD_WATCH_POLL_INTERVAL_MS
+            swimd_watch_poll_interval_ms
         );
 
         if (result == WAIT_TIMEOUT) {
@@ -144,7 +147,7 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
             if (watch->modification_occured) {
 
                 ll cur_time = swimd_watch_get_current_time();
-                if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
+                if (cur_time - watch->modification_time_ms < swimd_watch_silent_window_ms) {
                     continue;
                 }
                 bool ignore = false;
@@ -184,7 +187,7 @@ static DWORD WINAPI swimd_watch_watch_loop(LPVOID arg) {
             }
 
             ll cur_time = swimd_watch_get_current_time();
-            if (cur_time - watch->init_time_ms < SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS) {
+            if (cur_time - watch->init_time_ms < swimd_watch_start_handle_events_from_ms) {
                 continue;
             }
             watch->modification_occured = true;
@@ -311,7 +314,7 @@ static void* swimd_watch_watch_loop(void *arg) {
     char buf[4096];
 
     while (1) {
-        int ret = poll(fds, fds_len, SWIMD_WATCH_POLL_INTERVAL_MS);
+        int ret = poll(fds, fds_len, swimd_watch_poll_interval_ms);
         if (ret < 0) {
             if (errno == EINTR)
                 continue;
@@ -326,7 +329,7 @@ static void* swimd_watch_watch_loop(void *arg) {
             if (watch->modification_occured) {
 
                 ll cur_time = swimd_watch_get_current_time();
-                if (cur_time - watch->modification_time_ms < SWIMD_WATCH_SILENT_WINDOW_MS) {
+                if (cur_time - watch->modification_time_ms < swimd_watch_silent_window_ms) {
                     continue;
                 }
                 bool ignore = false;
@@ -358,7 +361,7 @@ static void* swimd_watch_watch_loop(void *arg) {
             }
 
             ll cur_time = swimd_watch_get_current_time();
-            if (cur_time - watch->init_time_ms < SWIMD_WATCH_START_HANDLE_EVENTS_FROM_MS) {
+            if (cur_time - watch->init_time_ms < swimd_watch_start_handle_events_from_ms) {
                 continue;
             }
             watch->modification_occured = true;
