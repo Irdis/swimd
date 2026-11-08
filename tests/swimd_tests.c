@@ -9,16 +9,7 @@
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-static void test1(SwimdCunitTestResult *res) {
-}
-
-static void test2(SwimdCunitTestResult *res) {
-    swimd_cunit_fail(res, "test2 has failed");
-}
-
 static SwimdCunitTest swimd_tests[] = {
-    { .name = "test1", .fn = &test1 },
-    { .name = "test2", .fn = &test2 },
     { .name = "swimd_scenarios_watch", .fn = &swimd_scenarios_watch}
 };
 
