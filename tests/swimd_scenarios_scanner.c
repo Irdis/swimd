@@ -34,20 +34,120 @@ static const char *file_names[] = {
     "module_49c7e1.h"
 };
 
-static SwimdScannerScores delta_expexted[] = {
-    { .str = "delta_8391.tmp", .score = 81 },
-    { .str = "nebula_4729.dat", .score = 46 },
-    { .str = "report_a4f92d.txt", .score = 45 },
-    { .str = "swimd_test_6381.c", .score = 43 },
-    { .str = "v2n8q5w3.data", .score = 33 },
-    { .str = "session_e7c31b9a.xml", .score = 30 },
-    { .str = "trace_2048.log", .score = 30 },
-    { .str = "runtime_a2d8f5.xml", .score = 30 },
-    { .str = "snapshot_7314.dat", .score = 30 },
-    { .str = "worker_4f2a8d.c", .score = 29 },
+static const char *delta_request = "delta";
+static SwimdScannerScores delta_expected[] = {
+    { .score = 81, .str = "delta_8391.tmp" },
+    { .score = 46, .str = "nebula_4729.dat" },
+    { .score = 45, .str = "report_a4f92d.txt" },
+    { .score = 43, .str = "swimd_test_6381.c" },
+    { .score = 33, .str = "v2n8q5w3.data" },
+    { .score = 30, .str = "session_e7c31b9a.xml" },
+    { .score = 30, .str = "trace_2048.log" },
+    { .score = 30, .str = "runtime_a2d8f5.xml" },
+    { .score = 30, .str = "snapshot_7314.dat" },
+    { .score = 29, .str = "worker_4f2a8d.c" },
 };
 
-static void swimd_scenarios_file_scanning(SwimdCunitTestResult *result) {
+static const char *snap_request = "snapshot_7314";
+static SwimdScannerScores snap_expected[] = {
+    { .score = 93, .str = "snapshot_7314.dat" },
+    { .score = 43, .str = "session_e7c31b9a.xml" },
+    { .score = 36, .str = "swimd_test_6381.c" },
+    { .score = 23, .str = "index_91b7e3.db" },
+    { .score = 23, .str = "temp_20261110_0142.log" },
+};
+
+static const char *suff_request = "a2d8f5";
+static SwimdScannerScores suff_expected[] = {
+    { .score = 76, .str = "runtime_a2d8f5.xml" },
+    { .score = 42, .str = "v2n8q5w3.data" },
+    { .score = 40, .str = "f8a2c91d.tmp" },
+    { .score = 38, .str = "cache_5d8a2c1e.db" },
+    { .score = 38, .str = "trace_2048.log" },
+    { .score = 36, .str = "report_a4f92d.txt" },
+    { .score = 28, .str = "nebula_4729.dat" },
+    { .score = 26, .str = "parser_6e9f2b.c" },
+    { .score = 25, .str = "swimd_test_6381.c" },
+    { .score = 24, .str = "worker_4f2a8d.c" },
+};
+
+static const char *ffff_request = "ffffffffffff";
+static SwimdScannerScores ffff_expected[] = {};
+
+
+static void swimd_scenarios_print_input_result(const char *request,
+        SwimdScannerProcessInputResult *input_result,
+        const char *expected_scores_name) {
+    printf("Result for: %s, expected_scores: %s\n", request, expected_scores_name);
+    printf("Actual result:\n");
+    for (int i = 0; i < input_result->items_length; i++) {
+        SwimdScannerProcessInputResultItem item = input_result->items[i];
+        printf("name = %s, score = %d, path = %s\n",
+                item.name,
+                item.score,
+                item.path);
+    }
+}
+
+static void swimd_scenarios_fail_input(const char *request,
+        SwimdScannerProcessInputResult *input_result,
+        const char *expected_scores_name,
+        const char *reason,
+        SwimdCunitTestResult *test_result) {
+    swimd_scenarios_print_input_result(request, input_result, expected_scores_name);
+    swimd_cunit_fail(test_result, "Mismatched item score of result output");
+}
+
+static bool swimd_scenarios_check_scores(const char *request,
+        SwimdScannerProcessInputResult *input_result,
+        const char *expected_scores_name,
+        SwimdScannerScores *expected_scores,
+        int expected_scores_length,
+        SwimdCunitTestResult *test_result) {
+
+    if (expected_scores_length != input_result->items_length) {
+        swimd_scenarios_fail_input(request,
+                input_result,
+                expected_scores_name,
+                "Mismatched item score of result output",
+                test_result);
+        return false;
+    }
+
+    for (int i = 0; i < input_result->items_length; i++) {
+        bool score_mismatched = false;
+        bool item_missing = true;
+
+        SwimdScannerProcessInputResultItem item = input_result->items[i];
+        for (int j = 0; j < input_result->items_length; j++) {
+            SwimdScannerScores item_exp = expected_scores[j];
+            if (strcmp(item.name, item_exp.str) == 0) {
+                item_missing = false;
+                score_mismatched = item.score != item_exp.score;
+                break;
+            }
+        }
+        if (score_mismatched) {
+            swimd_scenarios_fail_input(request,
+                    input_result,
+                    expected_scores_name,
+                    "Mismatched item score of result output",
+                    test_result);
+            return false;
+        }
+        if (item_missing) {
+            swimd_scenarios_fail_input(request,
+                    input_result,
+                    expected_scores_name,
+                    "Expected item is missing from result output",
+                    test_result);
+            return false;
+        }
+    }
+    return true;
+}
+
+static void swimd_scenarios_file_scanning(SwimdCunitTestResult *test_result) {
     swimd_scanner_global_init("swimd.log");
     swimd_scanner_scanners_glob_init();
 
@@ -69,7 +169,7 @@ static void swimd_scenarios_file_scanning(SwimdCunitTestResult *result) {
     SwimdScannerProcessInputResult input_result = {0};
 
     while (1) {
-        swimd_scanner_scan_process_input("delta", 10, &input_result, scanner);
+        swimd_scanner_scan_process_input(delta_request, 10, &input_result, scanner);
         if (input_result.scan_in_progress) {
             swimd_scanner_scan_process_input_free(&input_result);
             swimd_thread_sleep(50);
@@ -78,35 +178,45 @@ static void swimd_scenarios_file_scanning(SwimdCunitTestResult *result) {
         break;
     }
 
-    int delta_length = ARRAY_SIZE(delta_expexted);
+    if (!swimd_scenarios_check_scores(delta_request,
+                &input_result,
+                "delta_expected",
+                delta_expected,
+                ARRAY_SIZE(delta_expected),
+                test_result))
+        goto cleanup;
+    swimd_scanner_scan_process_input_free(&input_result);
 
-    if (delta_length != input_result.items_length) {
-        swimd_cunit_fail(result, "Mismatched length of result output");
-    } else {
-        for (int i = 0; i < input_result.items_length; i++) {
-            bool score_mismatched = false;
-            bool item_missing = true;
+    swimd_scanner_scan_process_input(snap_request, 10, &input_result, scanner);
+    if (!swimd_scenarios_check_scores(snap_request,
+                &input_result,
+                "snap_expected",
+                snap_expected,
+                ARRAY_SIZE(snap_expected),
+                test_result))
+        goto cleanup;
+    swimd_scanner_scan_process_input_free(&input_result);
 
-            SwimdScannerProcessInputResultItem item = input_result.items[i];
-            for (int j = 0; j < input_result.items_length; j++) {
-                SwimdScannerScores item_exp = delta_expexted[j];
-                if (strcmp(item.name, item_exp.str) == 0) {
-                    item_missing = false;
-                    score_mismatched = item.score != item_exp.score;
-                    break;
-                }
-            }
-            if (score_mismatched) {
-                swimd_cunit_fail(result, "Mismatched item score of result output");
-                break;
-            }
-            if (item_missing) {
-                swimd_cunit_fail(result, "Expected item is missing from result output");
-                break;
-            }
-        }
-    }
+    swimd_scanner_scan_process_input(suff_request, 10, &input_result, scanner);
+    if (!swimd_scenarios_check_scores(suff_request,
+                &input_result,
+                "suff_expected",
+                suff_expected,
+                ARRAY_SIZE(suff_expected),
+                test_result))
+        goto cleanup;
+    swimd_scanner_scan_process_input_free(&input_result);
 
+    swimd_scanner_scan_process_input(ffff_request, 10, &input_result, scanner);
+    if (!swimd_scenarios_check_scores(ffff_request,
+                &input_result,
+                "ffff_request",
+                ffff_expected,
+                ARRAY_SIZE(ffff_expected),
+                test_result))
+        goto cleanup;
+
+cleanup:
     swimd_scanner_scan_process_input_free(&input_result);
     swimd_scanner_shutdown();
 

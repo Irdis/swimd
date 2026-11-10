@@ -16,6 +16,7 @@ static SwimdCunitTest swimd_tests[] = {
 };
 
 int main() {
+    nob_set_log_handler(nob_null_log_handler);
     if (!swimd_cunit_run(swimd_tests, ARRAY_SIZE(swimd_tests))) {
         return 1;
     }
