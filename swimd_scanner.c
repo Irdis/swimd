@@ -1328,6 +1328,7 @@ static void swimd_scanner_top_scores_diagnostic(
     nob_sb_appendf(&sb, "len_diff_err = %d\n", len_diff_error);
     nob_sb_appendf(&sb, "needle = %s\n", needle);
     nob_sb_appendf(&sb, "file   = %s\n", file_name);
+    nob_sb_append_null(&sb);
     swimd_log_append(SWIMD_DEBUG, sb.items);
 
     nob_sb_free(sb);
@@ -1905,6 +1906,7 @@ void swimd_scanner_scan_process_input_free(SwimdScannerProcessInputResult *resul
         free(item.name);
     }
     free(result->items);
+    result->items_length = 0;
 }
 
 static void swimd_scanner_watch_owners_shutdown(void) {

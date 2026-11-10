@@ -2,6 +2,7 @@
 
 #include "swimd_cunit.h"
 #include "swimd_scenarios_watch.c"
+#include "swimd_scenarios_scanner.c"
 
 #define NOB_IMPLEMENTATION
 #undef ERROR
@@ -10,7 +11,8 @@
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 static SwimdCunitTest swimd_tests[] = {
-    { .name = "swimd_scenarios_watch", .fn = &swimd_scenarios_watch}
+    { .name = "swimd_scenarios_watch", .fn = &swimd_scenarios_watch },
+    { .name = "swimd_scenarios_file_scanning", .fn = &swimd_scenarios_file_scanning }
 };
 
 int main() {
