@@ -164,20 +164,12 @@ static void swimd_scenarios_file_scanning(SwimdCunitTestResult *test_result) {
         sb.count = 0;
     }
     swimd_scanner_scanners_setup_path(TEST_OUT"swimd_scenarios_file_scanning");
-
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
+    swimd_mre_wait(&scanner->scan_finished);
+
     SwimdScannerProcessInputResult input_result = {0};
 
-    while (1) {
-        swimd_scanner_scan_process_input(delta_request, 10, &input_result, scanner);
-        if (input_result.scan_in_progress) {
-            swimd_scanner_scan_process_input_free(&input_result);
-            swimd_thread_sleep(50);
-            continue;
-        }
-        break;
-    }
-
+    swimd_scanner_scan_process_input(delta_request, 10, &input_result, scanner);
     if (!swimd_scenarios_check_scores(delta_request,
                 &input_result,
                 "delta_expected",

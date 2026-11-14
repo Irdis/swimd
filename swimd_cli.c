@@ -9,159 +9,133 @@
 #include "swimd_watch.h"
 #include "swimd_scanner.h"
 
+#ifdef _WIN32
+    #include <direct.h>
+    #include <stdlib.h>
+#else
+    #include <unistd.h>
+    #include <limits.h>
+#endif
+
 #define NOB_IMPLEMENTATION
 #undef ERROR
 #include "nob.h"
 
-static void swimd_scanner_scenario_reinit(void) {
-    for (;;) {
-        swimd_scanner_global_init("swimd.log");
+#define MAX_PATH_LENGTH 300
 
-        swimd_scanner_scanners_glob_init();
+typedef struct  {
+    bool interactive;
+    char* needle;
+    char* path;
+    int top;
+    bool git;
+    bool print_stat;
+} SwimdCliArgs;
 
-        SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-
+void swimd_cli_get_current_dir(char *dir) {
 #ifdef _WIN32
-        swimd_scanner_scanners_setup_path("c:\\projects\\tmp_swimd");
+    _getcwd(dir, MAX_PATH_LENGTH);
 #else
-        swimd_scanner_scanners_setup_path("/home/ivan/Projects/tmp_swimd");
+    getcwd(dir, MAX_PATH_LENGTH);
 #endif
+}
 
-        SwimdScannerProcessInputResult result = {0};
-        swimd_scanner_scan_process_input("swimd", 10, &result, scanner);
+void swimd_cli_print_usage(FILE *out) {
+    fprintf(out, "swimd [args]:\n");
+    fprintf(out, "    -n <str>: needle\n");
+    fprintf(out, "    -p <str>: path, current directory if it is not specified\n");
+    fprintf(out, "    -top <N>: select top N, default 100\n");
+    fprintf(out, "    -git:     respect .gitignore\n");
+    fprintf(out, "    -s:       print statistics\n");
+    fprintf(out, "    -i:       interactive\n");
+    fprintf(out, "    -?:       show this message\n");
+}
 
-        if (result.scan_in_progress) {
-            printf("Scanning %d\n", result.scanned_items_count);
+void swimd_cli_print_invalid_args(void) {
+    fprintf(stderr, "Invalid argument list\n");
+    fprintf(stderr, "\n");
+    swimd_cli_print_usage(stderr);
+}
+
+bool swimd_cli_parse_args(SwimdCliArgs *res, int argc, char **argv) {
+    int ind = 1;
+    while (ind < argc) {
+        char *arg = argv[ind];
+        if (strcmp(arg, "-s") == 0) {
+            ind++;
+            res->print_stat = true;
+        } else if (strcmp(arg, "-n") == 0) {
+            ind++;
+            res->needle = argv[ind];
+            ind++;
+        } else if (strcmp(arg, "-top") == 0) {
+            ind++;
+            res->top = atoi(argv[ind]);
+            ind++;
+        } else if (strcmp(arg, "-p") == 0) {
+            ind++;
+            res->path = argv[ind];
+            ind++;
+        } else if (strcmp(arg, "-git") == 0) {
+            ind++;
+            res->git = true;
+        } else if (strcmp(arg, "-i") == 0) {
+            ind++;
+            res->interactive = true;
+        } else if (strcmp(arg, "-?") == 0) {
+            swimd_cli_print_usage(stdout);
+            return false;
         } else {
-            for (int i = 0; i < result.items_length; i++) {
-                SwimdScannerProcessInputResultItem item = result.items[i];
-
-                printf("name = %s, score = %d, path = %s\n",
-                        item.name,
-                        item.score,
-                        item.path);
-            }
+            swimd_cli_print_invalid_args();
+            return false;
         }
-
-        swimd_scanner_scan_process_input_free(&result);
-        getchar();
-        swimd_scanner_shutdown();
     }
 
-    printf("Over\n");
+    if (res->path == NULL) {
+        res->path = malloc(MAX_PATH_LENGTH);
+        swimd_cli_get_current_dir(res->path);
+    }
+
+    if (res->top <= 0) {
+        res->top = 100;
+    }
+
+    if (!res->interactive && res->needle == NULL) {
+        swimd_cli_print_invalid_args();
+        return false;
+    }
+
+    return true;
 }
 
-static void swimd_scanner_scenario_bench(void) {
+void swimd_cli_run_single(SwimdCliArgs *args) {
     swimd_scanner_global_init("swimd.log");
     swimd_scanner_scanners_glob_init();
 
-    SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
+    swimd_scanner_scanners_setup_path(args->path);
+    SwimdScanner *scanner = args->git
+        ? &swimd_scanner_scanners[SCANNER_GIT]
+        : &swimd_scanner_scanners[SCANNER_FILES];
+    swimd_mre_wait(&scanner->scan_finished);
 
-    for (int i = 0; i < 10; i++) {
-
-        swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-#ifdef _WIN32
-        swimd_scanner_scanners_setup_path("c:\\Projects\\experiments");
-#else
-        swimd_scanner_scanners_setup_path("/home/ivan/Projects/chromium");
-#endif
-        swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-
-        int it_count = 50;
-
-        while(1) {
-
-            double begin = swimd_scanner_now_us();
-
-            for (int i = 0; i < it_count; i++) {
-                SwimdScannerProcessInputResult result = {0};
-                swimd_scanner_scan_process_input("linux", 10, &result, scanner);
-                swimd_scanner_scan_process_input_free(&result);
-            }
-
-            double end = swimd_scanner_now_us();
-            double time_spent = (end - begin) / 1000;
-            printf("time spent %fms\n", time_spent / it_count);
-            SwimdScannerPhaseTimes *pt = &swimd_scanner_phase_times;
-            printf("prefilter & scores %.1fus, top %.1fus\n",
-                    pt->prefilter_and_scores_us / pt->count,
-                    pt->top_us / pt->count);
-            memset(pt, 0, sizeof(SwimdScannerPhaseTimes));
-        }
+    SwimdScannerProcessInputResult input_result = {0};
+    swimd_scanner_scan_process_input(args->needle,
+            args->top,
+            &input_result,
+            scanner);
+    for (int i = 0; i < input_result.items_length; i++) {
+        SwimdScannerProcessInputResultItem item = input_result.items[i];
+        printf("%s\n", item.path);
     }
-    swimd_scanner_shutdown();
 
-    printf("Over\n");
+    swimd_scanner_scan_process_input_free(&input_result);
+    swimd_scanner_shutdown();
 }
 
-static void swimd_scanner_scenario_scanning(void) {
-    swimd_scanner_global_init("swimd.log");
-    swimd_scanner_scanners_glob_init();
-
-    SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-
-    for (int i = 0; i < 10; i++) {
-
-        swimd_crit_lock(&swimd_scanner_scanners_request_lock);
-#ifdef _WIN32
-        swimd_scanner_scanners_setup_path("c:\\Projects\\experiments");
-#else
-        swimd_scanner_scanners_setup_path("/home/ivan/Projects/chromium");
-#endif
-        swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-
-        int count = 0;
-
-        while(1) {
-
-            double begin = swimd_scanner_now_us();
-
-            SwimdScannerProcessInputResult result = {0};
-            swimd_scanner_scan_process_input("sound", 10, &result, scanner);
-
-            double end = swimd_scanner_now_us();
-
-            double time_spent = (end - begin) / 1000;
-            printf("time spent %fms\n", time_spent);
-
-            SwimdScannerPhaseTimes *pt = &swimd_scanner_phase_times;
-            printf("prefilter & scores %.1fus, top %.1fus\n",
-                    pt->prefilter_and_scores_us / pt->count,
-                    pt->top_us / pt->count);
-            memset(pt, 0, sizeof(SwimdScannerPhaseTimes));
-
-            if (result.scan_in_progress) {
-                printf("Scanning %d\n", result.scanned_items_count);
-            } else {
-                if (result.items_length == 0) {
-                    printf("nothing matches\n");
-                }
-
-                for (int i = 0; i < result.items_length; i++) {
-                    SwimdScannerProcessInputResultItem item = result.items[i];
-
-                    printf("name = %s, score = %d, path = %s\n",
-                            item.name,
-                            item.score,
-                            item.path);
-                }
-            }
-
-            swimd_scanner_scan_process_input_free(&result);
-            count++;
-            if (count % 20 == 0)
-                getchar();
-        }
-    }
-    swimd_scanner_shutdown();
-
-    printf("Over\n");
-}
-
-int main() {
-    // swimd_scanner_scenario_bench();
-    swimd_scanner_scenario_scanning();
-    // swimd_scanner_scenario_reinit();
-
+int main(int argc, char **argv) {
+    SwimdCliArgs args = {0};
+    if (!swimd_cli_parse_args(&args, argc, argv))
+        return 1;
+    swimd_cli_run_single(&args);
     return 0;
 }
