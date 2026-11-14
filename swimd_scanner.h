@@ -8,6 +8,7 @@
 
 #include "swimd_bitset.h"
 #include "swimd_heap.h"
+#include "swimd_watch.h"
 
 #define uchar unsigned char
 

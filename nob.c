@@ -131,6 +131,14 @@ void cmd_add_o_test_exe(Nob_Cmd *cmd, SwimdNobOptions *opt) {
     }
 }
 
+void cmd_add_o_bench_exe(Nob_Cmd *cmd, SwimdNobOptions *opt) {
+    if (opt->mingw_compiler) {
+        nob_cmd_append(cmd, "-o", "build/bench_"MINGW_OUT_EXE);
+    } else {
+        nob_cmd_append(cmd, "-o", "build/bench_"CC_OUT_EXE);
+    }
+}
+
 void cmd_add_o_exe(Nob_Cmd *cmd, SwimdNobOptions *opt) {
     if (opt->mingw_compiler) {
         nob_cmd_append(cmd, "-o", "build/"MINGW_OUT_EXE);
@@ -163,24 +171,78 @@ void parse_options(SwimdNobOptions *opt, int argc, char **argv) {
 
 }
 
-bool build_tests(Nob_Cmd *cmd, SwimdNobOptions *opt) {
-    cmd_add_cc(cmd, opt);
-    nob_cmd_append(cmd, CC_SUBMODULE_CFLAGS);
-    cmd_add_debug_print_ifdef(cmd);
-    nob_cmd_append(cmd, "-c", "tests/swimd_cunit.c");
-    nob_cmd_append(cmd, "-o", "build/swimd_cunit.o");
-    if (!nob_cmd_run(cmd)) return false;
+bool build_bench(Nob_Cmd *cmd, SwimdNobOptions *opt) {
+    if (opt->mingw_compiler || opt->is_linux) {
+        cmd_add_cc(cmd, opt);
+        nob_cmd_append(cmd, CC_CFLAGS);
+        cmd_add_debug_print_ifdef(cmd);
+        cmd_add_cc_includes(cmd, opt);
+        cmd_add_o_bench_exe(cmd, opt);
+        nob_cmd_append(cmd, "bench/swimd_bench.c");
+        cmd_add_cc_links(cmd, opt);
+        if (!nob_cmd_run(cmd)) return false;
+        return true;
+    } else {
+        nob_cmd_append(cmd, MSVC_CC);
+        nob_cmd_append(cmd, "bench\\swimd_bench.c");
+        cmd_add_debug_print_ifdef(cmd);
+        nob_cmd_append(cmd, MSVC_CFLAGS);
 
-    cmd_add_cc(cmd, opt);
-    nob_cmd_append(cmd, CC_CFLAGS);
-    cmd_add_debug_print_ifdef(cmd);
-    nob_cmd_append(cmd, "build/swimd_cunit.o");
-    cmd_add_cc_includes(cmd, opt);
-    cmd_add_o_test_exe(cmd, opt);
-    nob_cmd_append(cmd, "tests/swimd_tests.c");
-    cmd_add_cc_links(cmd, opt);
-    if (!nob_cmd_run(cmd)) return false;
-    return true;
+        nob_cmd_append(cmd, MSVC_INCLUDES);
+        nob_cmd_append(cmd, "-link");
+        nob_cmd_append(cmd, MSVC_LINKS);
+
+        nob_cmd_append(cmd, "-out:build\\bench_swimd.exe");
+        cmd_add_msvc_link_flags(cmd);
+
+        if (!nob_cmd_run(cmd)) return false;
+        return true;
+    }
+}
+
+bool build_tests(Nob_Cmd *cmd, SwimdNobOptions *opt) {
+    if (opt->mingw_compiler || opt->is_linux) {
+        cmd_add_cc(cmd, opt);
+        nob_cmd_append(cmd, CC_SUBMODULE_CFLAGS);
+        cmd_add_debug_print_ifdef(cmd);
+        nob_cmd_append(cmd, "-c", "tests/swimd_cunit.c");
+        nob_cmd_append(cmd, "-o", "build/swimd_cunit.o");
+        if (!nob_cmd_run(cmd)) return false;
+
+        cmd_add_cc(cmd, opt);
+        nob_cmd_append(cmd, CC_CFLAGS);
+        cmd_add_debug_print_ifdef(cmd);
+        nob_cmd_append(cmd, "build/swimd_cunit.o");
+        cmd_add_cc_includes(cmd, opt);
+        cmd_add_o_test_exe(cmd, opt);
+        nob_cmd_append(cmd, "tests/swimd_tests.c");
+        cmd_add_cc_links(cmd, opt);
+        if (!nob_cmd_run(cmd)) return false;
+        return true;
+    } else {
+        nob_cmd_append(cmd, MSVC_CC);
+        nob_cmd_append(cmd, MSVC_SUBMODULE_CFLAGS);
+        cmd_add_debug_print_ifdef(cmd);
+        nob_cmd_append(cmd, "/c", "tests\\swimd_cunit.c");
+        nob_cmd_append(cmd, "/Fo:build\\swimd_cunit.obj");
+        if (!nob_cmd_run(cmd)) return false;
+
+        nob_cmd_append(cmd, MSVC_CC);
+        nob_cmd_append(cmd, "tests\\swimd_tests.c");
+        cmd_add_debug_print_ifdef(cmd);
+        nob_cmd_append(cmd, MSVC_CFLAGS);
+
+        nob_cmd_append(cmd, MSVC_INCLUDES);
+        nob_cmd_append(cmd, "-link");
+        nob_cmd_append(cmd, MSVC_LINKS);
+        nob_cmd_append(cmd, "build\\swimd_cunit.obj");
+
+        nob_cmd_append(cmd, "-out:build\\test_swimd.exe");
+        cmd_add_msvc_link_flags(cmd);
+
+        if (!nob_cmd_run(cmd)) return false;
+        return true;
+    }
 }
 
 int main(int argc, char **argv)
@@ -244,8 +306,6 @@ int main(int argc, char **argv)
         nob_cmd_append(&cmd, "-o", "build/swimd_scanner.o");
         if (!nob_cmd_run(&cmd)) return 1;
 
-        if (!build_tests(&cmd, &opt)) return 1;
-
         cmd_add_cc(&cmd, &opt);
         nob_cmd_append(&cmd, "-shared", "-fPIC");
         nob_cmd_append(&cmd, CC_CFLAGS);
@@ -263,8 +323,10 @@ int main(int argc, char **argv)
         cmd_add_o_exe(&cmd, &opt);
         nob_cmd_append(&cmd, "swimd_cli.c");
         cmd_add_cc_links(&cmd, &opt);
-
         if (!nob_cmd_run(&cmd)) return 1;
+
+        if (!build_tests(&cmd, &opt)) return 1;
+        if (!build_bench(&cmd, &opt)) return 1;
 
     } else {
 
