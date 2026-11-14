@@ -402,6 +402,9 @@ int main(int argc, char **argv)
         cmd_add_msvc_link_flags(&cmd);
 
         if (!nob_cmd_run(&cmd)) return 1;
+
+        if (!build_tests(&cmd, &opt)) return 1;
+        if (!build_bench(&cmd, &opt)) return 1;
     }
     return 0;
 }
