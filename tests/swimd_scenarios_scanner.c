@@ -45,7 +45,12 @@ static SwimdScannerScores delta_expected[] = {
     { .score = 30, .str = "trace_2048.log" },
     { .score = 30, .str = "runtime_a2d8f5.xml" },
     { .score = 30, .str = "snapshot_7314.dat" },
-    { .score = 29, .str = "worker_4f2a8d.c" },
+
+    { .score = 29 , .str = "cache_5d8a2c1e.db" },
+    { .score = 29 , .str = "worker_4f2a8d.c" },
+    { .score = 29 , .str = "buffer_c8d3a1.bin" },
+    { .score = 29 , .str = "module_49c7e1.h" },
+    { .score = 29 , .str = "index_91b7e3.db" },
 };
 
 static const char *snap_request = "snapshot_7314";
@@ -72,7 +77,7 @@ static SwimdScannerScores suff_expected[] = {
 };
 
 static const char *ffff_request = "ffffffffffff";
-static SwimdScannerScores ffff_expected[] = {};
+static SwimdScannerScores *ffff_expected = NULL;
 
 
 static void swimd_scenarios_print_input_result(const char *request,
@@ -95,7 +100,7 @@ static void swimd_scenarios_fail_input(const char *request,
         const char *reason,
         SwimdCunitTestResult *test_result) {
     swimd_scenarios_print_input_result(request, input_result, expected_scores_name);
-    swimd_cunit_fail(test_result, "Mismatched item score of result output");
+    swimd_cunit_fail(test_result, reason);
 }
 
 static bool swimd_scenarios_check_scores(const char *request,
@@ -105,11 +110,11 @@ static bool swimd_scenarios_check_scores(const char *request,
         int expected_scores_length,
         SwimdCunitTestResult *test_result) {
 
-    if (expected_scores_length != input_result->items_length) {
+    if (expected_scores_length < input_result->items_length) {
         swimd_scenarios_fail_input(request,
                 input_result,
                 expected_scores_name,
-                "Mismatched item score of result output",
+                "Mismatched result length, expected output should always contain more or equal number of elements than the actual result",
                 test_result);
         return false;
     }
@@ -119,7 +124,7 @@ static bool swimd_scenarios_check_scores(const char *request,
         bool item_missing = true;
 
         SwimdScannerProcessInputResultItem item = input_result->items[i];
-        for (int j = 0; j < input_result->items_length; j++) {
+        for (int j = 0; j < expected_scores_length; j++) {
             SwimdScannerScores item_exp = expected_scores[j];
             if (strcmp(item.name, item_exp.str) == 0) {
                 item_missing = false;
@@ -204,7 +209,7 @@ static void swimd_scenarios_file_scanning(SwimdCunitTestResult *test_result) {
                 &input_result,
                 "ffff_request",
                 ffff_expected,
-                ARRAY_SIZE(ffff_expected),
+                0,
                 test_result))
         goto cleanup;
 

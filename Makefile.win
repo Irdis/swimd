@@ -6,6 +6,9 @@ build/nob.exe:
 main: build/nob.exe
 	build\nob.exe
 
+main-mingw: build/nob.exe
+	build\nob.exe -mingw
+
 clean:
 	del *.exe *.exp *.lib *.obj *.dll *.pdb *.idb *.ilk *.log *.old
 	rmdir /s /q build
