@@ -11,6 +11,13 @@ M.setup = function()
 
     local cwd = vim.fn.getcwd()
     swimd.setup_workspace(cwd)
+
+    vim.api.nvim_create_autocmd("DirChanged", {
+        callback = function(args)
+            local new_dir = args.file
+            swimd.setup_workspace(new_dir)
+        end,
+    })
 end
 
 M.setup_libs = function ()
