@@ -14,14 +14,29 @@ Tested on the official [Chromium repository](https://github.com/chromium/chromiu
 
 **System:** Intel Core Ultra 7 258V, 8 CPUs, x86_64.
 
+### swimd
 ```text
 swimd -n linux -bench 10000
-2755 iterations, avg: 3.51ms, min: 2.70ms, max: 5.68ms, total: 10003.66ms, ingestion: 333.52ms
+    2755 iterations,
+    avg: 3.51ms,
+    min: 2.70ms,
+    max: 5.68ms,
+    total: 10003.66ms,
+    ingestion: 333.52ms
 ```
+
+### fzf
 
 ```text
 fzf --filter linux --bench 10s
-  437 iterations  avg: 22.91ms  min: 18.32ms  max: 60.20ms  total: 10.01s  items: 517061  matches: 58645 (11.34%)  ingestion: 324.65ms
+  437 iterations
+  avg: 22.91ms
+  min: 18.32ms
+  max: 60.20ms
+  total: 10.01s
+  items: 517061
+  matches: 58645 (11.34%)
+  ingestion: 324.65ms
 ```
 
 ## Installation
