@@ -18,7 +18,7 @@ static void swimd_scanner_scenario_bench(void) {
     swimd_scanner_scanners_glob_init();
 
 #ifdef _WIN32
-    swimd_scanner_scanners_setup_path("c:\\Projects\\experiments");
+    swimd_scanner_scanners_setup_path("c:\\Projects\\chromium");
 #else
     swimd_scanner_scanners_setup_path("/home/ivan/Projects/chromium");
 #endif
