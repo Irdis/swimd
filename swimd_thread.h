@@ -42,7 +42,8 @@ typedef struct {
 
 #endif // _WIN32
 
-typedef SwimdThreadCallbackResult SwimdThreadCallbackSpecifier (*swimd_thread_callback)(SwimdThreadCallbackArg);
+typedef SwimdThreadCallbackResult (*swimd_thread_callback)(SwimdThreadCallbackArg);
+
 void swimd_thread_create(SwimdThread *t,
         swimd_thread_callback callback,
         void *arg);

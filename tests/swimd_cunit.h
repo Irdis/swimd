@@ -1,6 +1,8 @@
 #ifndef SWIMD_CUNIT_H
 #define SWIMD_CUNIT_H
 
+#include <stdbool.h>
+
 #define SWIMD_CUNIT_TEST_OUT "tests/out/"
 
 typedef struct {
