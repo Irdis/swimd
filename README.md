@@ -14,20 +14,17 @@ Tested on the official [Chromium repository](https://github.com/chromium/chromiu
 
 **System:** Intel Core Ultra 7 258V, 8 CPUs, x86_64.
 
+**CLI tool commands**
+```bash
+> swimd -n linux -bench 10000
+> fzf --filter linux --bench 10s
+```
+
 | Tool | Iterations | Average | Min | Max | Ingestion |
 |---|---:|---:|---:|---:|---:|
-| swimd | 2,755 | **3.51 ms** | 2.70 ms | 5.68 ms | 333.52 ms |
+| swimd | 2,755 | 3.51 ms | 2.70 ms | 5.68 ms | 333.52 ms |
 | fzf | 437 | 22.91 ms | 18.32 ms | 60.20 ms | 324.65 ms |
 
-**swimd**
-```bash
-swimd -n linux -bench 10000
-```
-
-**fzf**
-```bash
-fzf --filter linux --bench 10s
-```
 
 ## Installation
 
