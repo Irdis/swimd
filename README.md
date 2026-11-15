@@ -13,6 +13,7 @@ Before scoring, a SIMD-accelerated prefilter drops any haystack string that does
 Tested on the official [Chromium repository](https://github.com/chromium/chromium) at commit `d467e30b91`.
 
 **System:** Intel Core Ultra 7 258V, 8 CPUs, x86_64.
+
 **OS:** Linux, 7.3.4-arch1-1
 
 **CLI tool commands**
