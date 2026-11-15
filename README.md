@@ -10,14 +10,24 @@ Before scoring, a SIMD-accelerated prefilter drops any haystack string that does
 
 ## Benchmark
 
-Tested on the official [Chromium repository](https://github.com/chromium/chromium) at commit `2f2925a399`.
+Tested on the official [Chromium repository](https://github.com/chromium/chromium) at commit `d467e30b91`.
 
 **System:** Intel Core Ultra 7 258V, 8 CPUs, x86_64.
 
-| Tool | Command | Iterations | Avg | Min | Max | Total | Items | Matches | Ingestion |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| swimd | `swimd -n linux -bench 10000` | 2,755 | 3.51 ms | 2.70 ms | 5.68 ms | 10,003.66 ms | — | — | 333.52 ms |
-| fzf | `fzf --filter linux --bench 10s` | 437 | 22.91 ms | 18.32 ms | 60.20 ms | 10.01 s | 517,061 | 58,645 (11.34%) | 324.65 ms |
+| Tool | Iterations | Average | Min | Max | Ingestion |
+|---|---:|---:|---:|---:|---:|
+| swimd | 2,755 | **3.51 ms** | 2.70 ms | 5.68 ms | 333.52 ms |
+| fzf | 437 | 22.91 ms | 18.32 ms | 60.20 ms | 324.65 ms |
+
+**swimd**
+```bash
+swimd -n linux -bench 10000
+```
+
+**fzf**
+```bash
+fzf --filter linux --bench 10s
+```
 
 ## Installation
 
