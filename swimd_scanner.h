@@ -16,6 +16,9 @@
 #define SCANNER_FILES 1
 #define SCANNER_COUNT 2
 
+#define SCANNER_MAX_PATH_LENGTH 4096
+#define SCANNER_MAX_NAME_LENGTH 255
+
 typedef struct {
     char *path;
     char *name;
@@ -23,6 +26,7 @@ typedef struct {
 } SwimdScannerProcessInputResultItem;
 
 typedef struct {
+    bool scanner_initialized;
     bool scan_in_progress;
     int scanned_items_count;
     SwimdScannerProcessInputResultItem *items;
@@ -70,8 +74,6 @@ typedef void (*swimd_scanner_scanning_func)(const char*,
         bool);
 
 typedef struct {
-    bool initialized;
-
     char *needle;
     int needle_length;
 
@@ -151,8 +153,8 @@ double swimd_scanner_now_us(void);
 void swimd_scanner_global_init(const char *log_path);
 void swimd_scanner_scanners_glob_init(void);
 void swimd_scanner_shutdown(void);
-void swimd_scanner_scanners_setup_path(const char *scan_path);
-void swimd_scanner_scanners_refresh_path(void);
+bool swimd_scanner_scanners_setup_path(const char *scan_path);
+bool swimd_scanner_scanners_refresh_path(void);
 bool swimd_scanner_scan_is_refreshing(SwimdScanner *scanner, int *read_count);
 void swimd_scanner_scan_process_input(const char *input,
         int max_size,

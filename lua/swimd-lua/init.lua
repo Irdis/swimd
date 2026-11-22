@@ -10,21 +10,33 @@ M.setup = function()
     swimd.init(M.log_path())
 
     local cwd = vim.fn.getcwd()
-    swimd.setup_workspace(cwd)
+    M.setup_workspace(cwd)
 
     vim.api.nvim_create_autocmd("DirChanged", {
         callback = function(args)
             local new_dir = args.file
-            swimd.setup_workspace(new_dir)
+            M.setup_workspace(new_dir)
         end,
     })
+end
+
+M.setup_workspace = function (dir)
+    local swimd = require("swimd")
+    if #dir > swimd.SCANNER_MAX_PATH_LENGTH then
+        M.log("cwd is too long")
+    else
+        local res = swimd.setup_workspace(dir)
+        if not res then
+            M.log("failed to setup workspace")
+        end
+    end
 end
 
 M.setup_libs = function ()
     if M.swimd_exist_and_version_match() then
         return
     end
-    M.log('Updating binaries...')
+    M.log('updating binaries...')
     local plugin_root = M.plugin_root()
     local build_folder = plugin_root .. 'build/'
     local release_folder = plugin_root .. 'release/'
@@ -35,7 +47,7 @@ M.setup_libs = function ()
     end
     M.clean_dir(build_folder)
     M.copy_folder_content(release_folder, build_folder);
-    M.log('Binaries updated')
+    M.log('binaries updated')
 end
 
 M.swimd_exist_and_version_match = function ()
@@ -182,9 +194,7 @@ M.i_feel_lucky_files = function (input)
 end
 
 M.i_feel_lucky = function (scanner_name, scanner, input)
-    local swimd = require("swimd")
-
-    local res = swimd.process_input(input, 1, scanner)
+    local res = M.process_input(input, 1, scanner)
     if res.scan_in_progress then
         M.log("not so lucky. " .. scanner_name .. " is scanning, comeback later...")
         return
@@ -210,11 +220,19 @@ end
 
 M.create_data_callback = function(scanner)
     return function (input)
-        local swimd = require("swimd")
-        local res = swimd.process_input(input, 100, scanner)
-
+        local res = M.process_input(input, 100, scanner)
         return res
     end
+end
+
+M.process_input = function (input, max_size, scanner)
+    local swimd = require("swimd")
+    if #input > swimd.SCANNER_MAX_NAME_LENGTH then
+        input = input:sub(1, swimd.SCANNER_MAX_NAME_LENGTH)
+    end
+    local res = swimd.process_input(input, max_size, scanner)
+
+    return res
 end
 
 M.file_exists = function (path)

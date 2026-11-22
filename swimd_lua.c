@@ -22,12 +22,17 @@
     #define EXPORT __attribute__((visibility("default")))
 #endif
 
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
 
 static int swimd_scanner_lua_init(lua_State *L) {
     if (swimd_scanner_initialized) {
-        swimd_log_append(SWIMD_INFO, "Already initialized");
-        return 0;
+        const char *err = "already initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
     }
+
     const char *log_path = lua_gettop(L) == 0 || lua_isnil(L, 1)
         ? NULL : luaL_checkstring(L, 1);
 
@@ -42,25 +47,62 @@ static int swimd_scanner_lua_init(lua_State *L) {
 }
 
 static int swimd_scanner_lua_shutdown(lua_State *L) {
+    if (!swimd_scanner_initialized) {
+        const char *err = "not initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
+    }
     swimd_scanner_shutdown();
     return 0;
 }
 
 static int swimd_scanner_lua_setup_workspace(lua_State *L) {
+    const char *err = NULL;
+
+    if (!swimd_scanner_initialized) {
+        err = "not initialized";
+        goto err;
+    }
+
     const char *workspace = luaL_checkstring(L, 1);
+    int workspace_length = strlen(workspace);
+    if (workspace_length > SCANNER_MAX_PATH_LENGTH) {
+        err = "workspace length exceeds max size "STR(SCANNER_MAX_PATH_LENGTH);
+        goto err;
+    }
+err:
+    if (err != NULL) {
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+        return luaL_error(L, err);
+    }
 
     swimd_log_append(SWIMD_INFO, "Setting up workspace path %s", workspace);
 
     swimd_crit_lock(&swimd_scanner_scanners_request_lock);
 
-    swimd_scanner_scanners_setup_path(workspace);
+    bool res = swimd_scanner_scanners_setup_path(workspace);
 
     swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
-    swimd_log_append(SWIMD_INFO, "Workspace path setup");
-    return 0;
+
+    lua_pushboolean(L, res);
+
+    if (res) {
+        swimd_log_append(SWIMD_INFO, "Workspace path setup" );
+    } else {
+        swimd_log_append(SWIMD_WARN, "Failed to setup workspace path %s", workspace);
+    }
+    return 1;
 }
 
 static int swimd_scanner_lua_is_git_repo(lua_State *L) {
+    if (!swimd_scanner_initialized) {
+        const char *err = "not initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
+    }
+
     git_repository *repo = NULL;
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_GIT];
     int repo_result = git_repository_open_ext(&repo,
@@ -71,24 +113,33 @@ static int swimd_scanner_lua_is_git_repo(lua_State *L) {
 }
 
 static int swimd_scanner_lua_refresh_workspace(lua_State *L) {
+    if (!swimd_scanner_initialized) {
+        const char *err = "not initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
+    }
+
     swimd_log_append(SWIMD_INFO, "Refreshing workspace, requested from lua");
     swimd_crit_lock(&swimd_scanner_scanners_request_lock);
 
-    for (int i = 0; i < SCANNER_COUNT; i++) {
-        SwimdScanner *scanner = &swimd_scanner_scanners[i];
-        if (scanner->scan_in_progress)
-            goto cleanup;
-    }
-
-    swimd_scanner_scanners_refresh_path();
+    bool success = swimd_scanner_scanners_refresh_path();
+    lua_pushboolean(L, success);
 
 cleanup:
     swimd_crit_unlock(&swimd_scanner_scanners_request_lock);
     swimd_log_append(SWIMD_INFO, "Refresh requested");
-    return 0;
+    return 1;
 }
 
 static int swimd_scanner_lua_is_refreshing(lua_State *L) {
+    if (!swimd_scanner_initialized) {
+        const char *err = "not initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
+    }
+
     swimd_log_append(SWIMD_INFO, "Quering refresh status");
     lua_newtable(L);
 
@@ -126,19 +177,52 @@ static int swimd_scanner_lua_is_refreshing(lua_State *L) {
 }
 
 static int swimd_scanner_lua_process_input(lua_State *L) {
-    swimd_crit_lock(&swimd_scanner_scanners_request_lock);
+    const char *err = NULL;
+
+    if (!swimd_scanner_initialized) {
+        err = "not initialized";
+        goto err;
+    }
 
     const char *input = luaL_checkstring(L, 1);
+    size_t input_len = strlen(input);
+    if (input_len > SCANNER_MAX_NAME_LENGTH) {
+        err = "input len exceeds max size "STR(SCANNER_MAX_NAME_LENGTH);
+        goto err;
+    }
+
     int max_size = luaL_checknumber(L, 2);
+    if (max_size < 0) {
+        err = "invalid max size";
+        goto err;
+    }
+
     int scanner_index = luaL_checknumber(L, 3);
+    if (scanner_index < 0 || scanner_index >= SCANNER_COUNT) {
+        err = "invalid scanner index";
+        goto err;
+    }
+
+err:
+    if (err != NULL) {
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+        return luaL_error(L, err);
+    }
+
+    swimd_crit_lock(&swimd_scanner_scanners_request_lock);
 
     SwimdScannerProcessInputResult result = {0};
     SwimdScanner *scanner = &swimd_scanner_scanners[scanner_index];
 
     swimd_scanner_scan_process_input(input, max_size, &result, scanner);
     lua_newtable(L);
+
     lua_pushstring(L, "scan_in_progress");
     lua_pushboolean(L, result.scan_in_progress);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "scanner_initialized");
+    lua_pushboolean(L, result.scanner_initialized);
     lua_settable(L, -3);
 
     lua_pushstring(L, "scanned_items_count");
@@ -178,15 +262,26 @@ static int swimd_scanner_lua_process_input(lua_State *L) {
 }
 
 static int swimd_scanner_lua_sayhello(lua_State *L) {
+    if (!swimd_scanner_initialized) {
+        const char *err = "not initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
+    }
+
     const char *str = luaL_checkstring(L, 1);
-    char greeting[100] = "Hello, ";
-    strcat(greeting, str);
-    strcat(greeting, "!");
-    lua_pushstring(L, greeting);
+    lua_pushfstring(L, "Hello, %s!", str);
     return 1;
 }
 
 static int swimd_scanner_lua_log(lua_State *L) {
+    if (!swimd_scanner_initialized) {
+        const char *err = "not initialized";
+        swimd_log_append(SWIMD_WARN, "%s, %s", __func__, err);
+
+        return luaL_error(L, err);
+    }
+
     const char *str = luaL_checkstring(L, 1);
     swimd_log_append(SWIMD_INFO, "[swimd-lua]: %s", str);
     return 1;
@@ -214,6 +309,12 @@ int luaopen_swimd(lua_State *L) {
 
     lua_pushinteger(L, SCANNER_GIT);
     lua_setfield(L, -2, "SCANNER_GIT");
+
+    lua_pushinteger(L, SCANNER_MAX_NAME_LENGTH);
+    lua_setfield(L, -2, "SCANNER_MAX_NAME_LENGTH");
+
+    lua_pushinteger(L, SCANNER_MAX_PATH_LENGTH);
+    lua_setfield(L, -2, "SCANNER_MAX_PATH_LENGTH");
 
     return 1;
 }

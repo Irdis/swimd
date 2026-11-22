@@ -11,10 +11,11 @@ else
 end
 
 Swimd = require("swimd")
+Swimd.init("swimd.log")
 print(Swimd.say_hello("abc1"))
-Swimd.init()
 Swimd.setup_workspace("/home/ivan/Projects/linux")
 Swimd.refresh_workspace()
-print(vim.inspect(Swimd.process_input("main", 5, Swimd.SCANNER_GIT)))
+local str = "sound"
+print(vim.inspect(Swimd.process_input(str, 5, Swimd.SCANNER_GIT)))
 Swimd.shutdown()
 

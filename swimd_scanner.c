@@ -36,7 +36,6 @@
     #define PATH_SLASH_CHAR '/'
 #endif
 
-#define MAX_PATH_LENGTH 300
 #define LANES_COUNT_SHORT 16
 #define LANES_COUNT_CHAR 32
 #define PROFILE_CHAR_COUNT 256
@@ -61,7 +60,7 @@ static int GAP_PENALTY[][2] = {
     { -10, -1 }
 };
 #define Vector __m256i
-#define D_IND(i, j) (MAX_PATH_LENGTH * LANES_COUNT_SHORT * (i) + \
+#define D_IND(i, j) (SCANNER_MAX_NAME_LENGTH * LANES_COUNT_SHORT * (i) + \
             LANES_COUNT_SHORT * (j))
 
 #define ABS(x) ((x) < 0 ? -(x) : (x))
@@ -142,6 +141,31 @@ static int swimd_scanner_get_core_count(void) {
     return sysinfo.dwNumberOfProcessors;
 #else
     return sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+}
+
+static bool swimd_scanner_directory_exists(const char *path) {
+#ifdef _WIN32
+    DWORD ftyp = GetFileAttributesA(path);
+    if (ftyp == INVALID_FILE_ATTRIBUTES)
+        return false; // something is wrong with your path
+
+    if (ftyp & FILE_ATTRIBUTE_DIRECTORY) {
+        return true; // this is a directory
+    }
+
+    return false; // this is not a directory
+#else
+    DIR* dir = opendir(path);
+    if (dir) {
+        closedir(dir);
+        return true; // directory exists
+    }
+    if (ENOENT == errno) {
+        return false; // directory does not exist
+    } else {
+        return false; // opendir() failed for some other reason
+    }
 #endif
 }
 
@@ -347,22 +371,30 @@ static void swimd_scanner_file_list_free(SwimdScannerFileList *lst) {
 #ifdef _WIN32
 
 static void swimd_scanner_list_files_win32_rec(const char *root_dir,
+        int root_dir_length,
         SwimdScannerFileList *file_list,
         SwimdScannerFolderStruct *root_folder,
         SwimdWatchOwner *watch_owner,
         bool refreshing,
-        bool is_root) {
+        bool is_root,
+        int *skipped_folders,
+        int *skipped_files) {
+    const char mask[] = "\\*";
+    const int mask_length = 2;
+
+    if (root_dir_length + mask_length + 1 > SCANNER_MAX_PATH_LENGTH) {
+        (*skipped_folders)++;
+        return;
+    }
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-    char root_mask[MAX_PATH_LENGTH];
-    char inner_folder[MAX_PATH_LENGTH];
+    char root_mask[SCANNER_MAX_PATH_LENGTH];
+    char inner_folder[SCANNER_MAX_PATH_LENGTH];
 
     strcpy(root_mask, root_dir);
-    strcat(root_mask, "\\*");
+    strcat(root_mask, mask);
 
     WIN32_FIND_DATA find_file_data;
-    HANDLE h_find;
-
-    h_find = FindFirstFile(root_mask, &find_file_data);
+    HANDLE h_find = FindFirstFile(root_mask, &find_file_data);
 
     if (h_find == INVALID_HANDLE_VALUE) {
         swimd_log_append(SWIMD_ERR, "FindFirstFile failed (%lu)\n", GetLastError());
@@ -376,6 +408,11 @@ static void swimd_scanner_list_files_win32_rec(const char *root_dir,
 
         if (find_file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (strcmp(current_file, ".") != 0 && strcmp(current_file, "..") != 0) {
+                int inner_folder_length = root_dir_length + 1 + current_file_len + 1;
+                if (inner_folder_length > SCANNER_MAX_PATH_LENGTH) {
+                    (*skipped_folders)++;
+                    goto next;
+                }
                 char *folder_name = malloc((current_file_len + 1) * sizeof(char));
                 strcpy(folder_name, current_file);
                 folder_name[current_file_len] = '\0';
@@ -394,13 +431,22 @@ static void swimd_scanner_list_files_win32_rec(const char *root_dir,
                 strcat(inner_folder, current_file);
 
                 swimd_scanner_list_files_win32_rec(inner_folder,
+                        inner_folder_length,
                         file_list,
                         folder_node,
                         watch_owner,
                         refreshing,
-                        false);
+                        false,
+                        skipped_folders,
+                        skipped_files);
             }
         } else {
+            if (current_file_len + 1 > SCANNER_MAX_NAME_LENGTH ||
+                    root_dir_length + 1 + current_file_len + 1 > SCANNER_MAX_PATH_LENGTH) {
+                (*skipped_files)++;
+                goto next;
+            }
+
             char *file_name = malloc((current_file_len + 1) * sizeof(char));
             strcpy(file_name, current_file);
             file_name[current_file_len] = '\0';
@@ -417,6 +463,7 @@ static void swimd_scanner_list_files_win32_rec(const char *root_dir,
             else
                 scanner->scan_files_refresh_count++;
         }
+next:
 
         if (FindNextFile(h_find, &find_file_data) == 0)
             break;
@@ -440,23 +487,36 @@ static void swimd_scanner_list_files_win32(const char *root_dir,
         SwimdScannerFolderStruct *root_folder,
         SwimdWatchOwner *watch_owner,
         bool refreshing) {
+    int skipped_folders = 0;
+    int skipped_files = 0;
+
     swimd_scanner_list_files_win32_rec(root_dir,
+            strlen(root_dir),
             file_list,
             root_folder,
             watch_owner,
             refreshing,
-            true);
+            true,
+            &skipped_folders,
+            &skipped_files);
+
+    if (skipped_folders > 0 || skipped_files > 0) {
+        swimd_log_append(SWIMD_WARN, "Encountered long paths during scanning, skipped folders %d, skipped files %d", skipped_folders, skipped_files);
+    }
 }
 
 #else
 static void swimd_scanner_list_files_linux_rec(const char *root_dir,
+        int root_dir_length,
         SwimdScannerFileList *file_list,
         SwimdScannerFolderStruct *root_folder,
         SwimdWatchOwner *watch_owner,
         bool refreshing,
-        bool is_root) {
+        bool is_root,
+        int *skipped_folders,
+        int *skipped_files) {
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
-    char inner_folder[MAX_PATH_LENGTH];
+    char inner_folder[SCANNER_MAX_PATH_LENGTH];
     struct dirent *entry;
     DIR *dp = opendir(root_dir);
     if (dp == NULL) {
@@ -470,6 +530,11 @@ static void swimd_scanner_list_files_linux_rec(const char *root_dir,
         int current_file_len = strlen(current_file);
         if (entry->d_type == DT_DIR) {
             if (strcmp(current_file, ".") != 0 && strcmp(current_file, "..") != 0) {
+                int inner_folder_length = root_dir_length + 1 + current_file_len + 1;
+                if (inner_folder_length > SCANNER_MAX_PATH_LENGTH) {
+                    (*skipped_folders)++;
+                    continue;
+                }
                 char *folder_name = malloc((current_file_len + 1) * sizeof(char));
                 strcpy(folder_name, current_file);
                 folder_name[current_file_len] = '\0';
@@ -487,13 +552,21 @@ static void swimd_scanner_list_files_linux_rec(const char *root_dir,
                 strcat(inner_folder, current_file);
 
                 swimd_scanner_list_files_linux_rec(inner_folder,
+                        inner_folder_length,
                         file_list,
                         folder_node,
                         watch_owner,
                         refreshing,
-                        false);
+                        false,
+                        skipped_folders,
+                        skipped_files);
             }
         } else if (entry->d_type == DT_REG) {
+            if (current_file_len + 1 > SCANNER_MAX_NAME_LENGTH ||
+                    root_dir_length + 1 + current_file_len + 1 > SCANNER_MAX_PATH_LENGTH) {
+                (*skipped_files)++;
+                continue;
+            }
             char *file_name = malloc((current_file_len + 1) * sizeof(char));
             strcpy(file_name, current_file);
             file_name[current_file_len] = '\0';
@@ -523,12 +596,22 @@ static void swimd_scanner_list_files_linux(const char *root_dir,
         SwimdScannerFolderStruct *root_folder,
         SwimdWatchOwner *watch_owner,
         bool refreshing) {
+    int skipped_folders = 0;
+    int skipped_files = 0;
+
     swimd_scanner_list_files_linux_rec(root_dir,
+        strlen(root_dir),
         file_list,
         root_folder,
         watch_owner,
         refreshing,
-        true);
+        true,
+        &skipped_folders,
+        &skipped_files);
+
+    if (skipped_folders > 0 || skipped_files > 0) {
+        swimd_log_append(SWIMD_WARN, "Encountered long paths during scanning, skipped folders %d, skipped files %d", skipped_folders, skipped_files);
+    }
 }
 #endif
 
@@ -570,6 +653,20 @@ static void swimd_scanner_log_git2_error(const char *message, int error) {
     }
 
     swimd_log_append(SWIMD_ERR, "%s [%d] %s", message, error, lg2msg);
+}
+
+static int swimd_scanner_path_file_length(const char *a, int a_len, char separator) {
+    int ind = a_len - 1;
+    int file_length = 0;
+    while (1) {
+        if (ind < 0) {
+            return file_length;
+        }
+        if (a[ind] == separator) {
+            return file_length;
+        }
+        ind--;
+    }
 }
 
 static int swimd_scanner_path_length(const char *a, int segment_count, char separator) {
@@ -732,7 +829,8 @@ static SwimdScannerFolderStruct *swimd_scanner_process_path(const char *path,
 static void swimd_scanner_git_collect_index_paths(git_repository *repo,
         SwimdScannerFileList *file_list,
         SwimdScannerFolderStruct *root_folder,
-        bool refreshing) {
+        bool refreshing,
+        int *skipped_files) {
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_GIT];
     if (scanner->scan_cancelled_request)
         return;
@@ -749,12 +847,25 @@ static void swimd_scanner_git_collect_index_paths(git_repository *repo,
 
     SwimdScannerFolderStruct *cur_folder = root_folder;
     int cur_depth = 0;
-    char cur_path[MAX_PATH_LENGTH] = "";
+    char cur_path[SCANNER_MAX_PATH_LENGTH] = "";
 
     for (size_t i = 0; i < entry_count; i++) {
         const git_index_entry *entry = git_index_get_byindex(index, i);
+        const char *path = entry->path;
+
+        int entry_path_length = strlen(path);
+        if (entry_path_length + 1 > SCANNER_MAX_PATH_LENGTH) {
+            (*skipped_files)++;
+            continue;
+        }
+        int entry_file_name_length = swimd_scanner_path_file_length(path, entry_path_length, PATH_SLASH_GIT_CHAR);
+        if (entry_file_name_length + 1 > SCANNER_MAX_NAME_LENGTH) {
+            (*skipped_files)++;
+            continue;
+        }
+
         int depth = 0;
-        cur_folder = swimd_scanner_process_path(entry->path,
+        cur_folder = swimd_scanner_process_path(path,
             file_list,
             cur_folder,
             cur_path,
@@ -762,7 +873,7 @@ static void swimd_scanner_git_collect_index_paths(git_repository *repo,
             &depth,
             refreshing);
         cur_depth = depth;
-        strcpy(cur_path, entry->path);
+        strcpy(cur_path, path);
 
         if (scanner->scan_cancelled_request)
             break;
@@ -775,7 +886,8 @@ cleanup:
 static void swimd_scanner_git_collect_status_paths(git_repository *repo,
         SwimdScannerFileList *file_list,
         SwimdScannerFolderStruct *root_folder,
-        bool refreshing) {
+        bool refreshing,
+        int *skipped_files) {
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_GIT];
     if (scanner->scan_cancelled_request)
         return;
@@ -794,7 +906,7 @@ static void swimd_scanner_git_collect_status_paths(git_repository *repo,
 
     SwimdScannerFolderStruct *cur_folder = root_folder;
     int cur_depth = 0;
-    char cur_path[MAX_PATH_LENGTH] = "";
+    char cur_path[SCANNER_MAX_PATH_LENGTH] = "";
 
     size_t count = git_status_list_entrycount(status_list);
     for (size_t i = 0; i < count; i++) {
@@ -804,6 +916,18 @@ static void swimd_scanner_git_collect_status_paths(git_repository *repo,
         }
         const char *path = entry->index_to_workdir->new_file.path;
         if ((entry->status & GIT_STATUS_WT_NEW) > 0) {
+
+            int entry_path_length = strlen(path);
+            if (entry_path_length + 1 > SCANNER_MAX_PATH_LENGTH) {
+                (*skipped_files)++;
+                continue;
+            }
+            int entry_file_name_length = swimd_scanner_path_file_length(path, entry_path_length, PATH_SLASH_GIT_CHAR);
+            if (entry_file_name_length + 1 > SCANNER_MAX_NAME_LENGTH) {
+                (*skipped_files)++;
+                continue;
+            }
+
             int depth = 0;
             cur_folder = swimd_scanner_process_path(path,
                 file_list,
@@ -858,14 +982,20 @@ static void swimd_scanner_list_git(const char *root_dir,
     base_path[repo_path_length] = '\0';
     swimd_scanner_list_git_normalize_base_path(base_path);
 
+    int skipped_files = 0;
     swimd_scanner_git_collect_index_paths(repo,
             file_list,
             root_folder,
-            refreshing);
+            refreshing,
+            &skipped_files);
     swimd_scanner_git_collect_status_paths(repo,
             file_list,
             root_folder,
-            refreshing);
+            refreshing,
+            &skipped_files);
+    if (skipped_files > 0) {
+        swimd_log_append(SWIMD_WARN, "Encountered long paths during Git scanning, skipped files %d", skipped_files);
+    }
 cleanup:
     git_repository_free(repo);
 }
@@ -1433,7 +1563,7 @@ static void swimd_scanner_start_scanning(const char *root_path, SwimdScanner *sc
     SwimdScannerFileList *files = malloc(sizeof(SwimdScannerFileList));
     SwimdScannerFolderStruct *folders = malloc(sizeof(SwimdScannerFolderStruct));
 
-    char *base_path = malloc(MAX_PATH_LENGTH * sizeof(char));
+    char *base_path = malloc(SCANNER_MAX_PATH_LENGTH * sizeof(char));
     swimd_scanner_init_root_folder(folders);
 
     swimd_scanner_file_list_init(files);
@@ -1518,16 +1648,16 @@ static void swimd_scanner_scan_thread_init(SwimdScanner *scanner) {
 }
 
 static void swimd_scanner_d_vec_unit_init(SwimdScanner *scanner, int d_ind) {
-    short* d_unit = malloc(MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
-    memset(d_unit, 0, MAX_PATH_LENGTH * MAX_PATH_LENGTH * LANES_COUNT_SHORT * sizeof(short));
-    for (int i = 1; i < MAX_PATH_LENGTH; i++) {
+    short* d_unit = malloc(SCANNER_MAX_NAME_LENGTH * SCANNER_MAX_NAME_LENGTH * LANES_COUNT_SHORT * sizeof(short));
+    memset(d_unit, 0, SCANNER_MAX_NAME_LENGTH * SCANNER_MAX_NAME_LENGTH * LANES_COUNT_SHORT * sizeof(short));
+    for (int i = 1; i < SCANNER_MAX_NAME_LENGTH; i++) {
         short value = d_unit[D_IND(i - 1, 0)];
         value += scanner->gap_distr_fun[i - 1];
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
             d_unit[D_IND(i, 0) + j] = value;
         }
     }
-    for (int i = 1; i < MAX_PATH_LENGTH; i++) {
+    for (int i = 1; i < SCANNER_MAX_NAME_LENGTH; i++) {
         short value = d_unit[D_IND(0, i - 1)];
         value += scanner->gap_distr_fun[i - 1];
         for (int j = 0; j < LANES_COUNT_SHORT; j++) {
@@ -1585,10 +1715,10 @@ static void swimd_scanner_gap_distr_sum(short *sum, short *arr, int n) {
 }
 
 static void swimd_scanner_gap_distr_init(SwimdScanner *scanner) {
-    scanner->gap_distr_fun = malloc(MAX_PATH_LENGTH * sizeof(short));
-    scanner->gap_distr_sum = malloc(MAX_PATH_LENGTH * sizeof(short));
-    swimd_scanner_gap_distr_fun(scanner->gap_distr_fun, MAX_PATH_LENGTH);
-    swimd_scanner_gap_distr_sum(scanner->gap_distr_sum, scanner->gap_distr_fun, MAX_PATH_LENGTH);
+    scanner->gap_distr_fun = malloc(SCANNER_MAX_NAME_LENGTH * sizeof(short));
+    scanner->gap_distr_sum = malloc(SCANNER_MAX_NAME_LENGTH * sizeof(short));
+    swimd_scanner_gap_distr_fun(scanner->gap_distr_fun, SCANNER_MAX_NAME_LENGTH);
+    swimd_scanner_gap_distr_sum(scanner->gap_distr_sum, scanner->gap_distr_fun, SCANNER_MAX_NAME_LENGTH);
 }
 
 static void swimd_scanner_gap_distr_free(SwimdScanner *scanner) {
@@ -1698,13 +1828,17 @@ static void swimd_scanner_scanners_watch_end_tracking(void) {
     }
 }
 
-void swimd_scanner_scanners_setup_path(const char *scan_path) {
+bool swimd_scanner_scanners_setup_path(const char *scan_path) {
+    if (!swimd_scanner_directory_exists(scan_path))
+        return false;
+
     swimd_scanner_scanners_cancel();
     swimd_scanner_scanners_watch_end_tracking();
 
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scanner_scan_setup_path(scan_path, &swimd_scanner_scanners[i]);
     }
+    return true;
 }
 
 bool swimd_scanner_scan_is_refreshing(SwimdScanner *scanner, int *read_count) {
@@ -1731,11 +1865,19 @@ static void swimd_scanner_scan_refresh_path(SwimdScanner *scanner) {
     swimd_are_wait(&scanner->scan_started);
 }
 
-void swimd_scanner_scanners_refresh_path(void) {
+bool swimd_scanner_scanners_refresh_path(void) {
+    for (int i = 0; i < SCANNER_COUNT; i++) {
+        SwimdScanner *scanner = &swimd_scanner_scanners[i];
+        if (scanner->scan_path == NULL ||
+                scanner->scan_in_progress)
+            return false;
+    }
+
     swimd_scanner_scanners_watch_end_tracking();
     for (int i = 0; i < SCANNER_COUNT; i++) {
         swimd_scanner_scan_refresh_path(&swimd_scanner_scanners[i]);
     }
+    return true;
 }
 
 
@@ -1777,7 +1919,8 @@ static void swimd_scanner_str_reverse(char *buf, int buf_length) {
     }
 }
 
-static void swimd_scanner_print_relative(char *file_path, char *scan_path, char *base_path) {
+static void swimd_scanner_print_relative(char *file_path, char *scan_path, char *base_path, bool *overflow) {
+    *overflow = false;
     int base_path_len = strlen(base_path);
     int scan_path_len = strlen(scan_path);
 
@@ -1800,6 +1943,10 @@ static void swimd_scanner_print_relative(char *file_path, char *scan_path, char 
     swimd_scanner_str_shift_left(file_path, file_path_len, relative_math_len);
 
     int pref_len = up_count * 3;
+    if (file_path_len + pref_len + 1 > SCANNER_MAX_PATH_LENGTH) {
+        *overflow = true;
+        return;
+    }
     swimd_scanner_str_shift_right(file_path, file_path_len, pref_len);
 
     for (int i = 0; i < up_count; i++) {
@@ -1848,14 +1995,21 @@ static void swimd_scanner_process_input(const char *needle,
     swimd_scanner_phase_times.count++;
 
     result->items = malloc(max_size * sizeof(SwimdScannerProcessInputResultItem));
+    result->items_length = 0;
 
+    int skipped_files = 0;
     for (int i = 0; i < scanner->scores_heaps[0].size; i++) {
         SwimdHeapItem heap_item = scanner->scores_heaps[0].arr[i];
         SwimdScannerFile file = scanner->files->arr[heap_item.index];
 
-        char path[MAX_PATH_LENGTH];
+        char path[SCANNER_MAX_PATH_LENGTH];
         swimd_scanner_print_path(path, &file);
-        swimd_scanner_print_relative(path, scanner->scan_path, scanner->base_path);
+        bool overflow = false;
+        swimd_scanner_print_relative(path, scanner->scan_path, scanner->base_path, &overflow);
+        if (overflow) {
+            skipped_files++;
+            continue;
+        }
         int path_length = strlen(path);
 
         SwimdScannerProcessInputResultItem item = {0};
@@ -1867,6 +2021,10 @@ static void swimd_scanner_process_input(const char *needle,
 
         result->items[result->items_length] = item;
         result->items_length++;
+    }
+
+    if (skipped_files > 0) {
+        swimd_log_append(SWIMD_WARN, "Encountered long paths during printing result, skipped files %d", skipped_files);
     }
 
     for (int i = 0; i < result->items_length / 2; i++) {
@@ -1884,6 +2042,12 @@ void swimd_scanner_scan_process_input(const char *input,
 
     swimd_crit_lock(&scanner->scan_state_swap);
 
+    if (scanner->scan_path == NULL) {
+        result->scanner_initialized = false;
+        goto cleanup;
+    }
+
+    result->scanner_initialized = true;
     result->scanned_items_count = scanner->scan_files_count;
 
     if (scanner->scan_in_progress && !scanner->scan_is_refreshing) {
@@ -1893,6 +2057,7 @@ void swimd_scanner_scan_process_input(const char *input,
         swimd_scanner_process_input(input, max_size, result, scanner);
     }
 
+cleanup:
     swimd_crit_unlock(&scanner->scan_state_swap);
 }
 
