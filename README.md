@@ -22,11 +22,12 @@ swimd -n linux -bench 10000
 fzf --filter linux --bench 10s
 ```
 
-| Tool | Iterations | Average | Min | Max | Ingestion |
+| Tool | Iterations | Average | Min | Max | Ingestion* |
 |---|---:|---:|---:|---:|---:|
 | swimd | 2,755 | 3.51 ms | 2.70 ms | 5.68 ms | 333.52 ms |
 | fzf | 437 | 22.91 ms | 18.32 ms | 60.20 ms | 324.65 ms |
 
+<sub>* “Ingestion” in swimd refers to the time elapsed from program startup through reading the file tree and building indexes until the first query can be run.</sub>
 
 ## Installation
 
