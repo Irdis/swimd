@@ -152,23 +152,25 @@ static bool swimd_scenarios_check_scores(const char *request,
     return true;
 }
 
+#define FILE_SCORE_FOLDER TEST_OUT"swimd_scenarios_file_scanning"
+
 static void swimd_scenarios_file_scanning(SwimdCunitTestResult *test_result) {
     swimd_scanner_global_init("swimd.log");
     swimd_scanner_scanners_glob_init();
 
-    nob_mkdir_if_not_exists(TEST_OUT"swimd_scenarios_file_scanning");
+    nob_mkdir_if_not_exists(FILE_SCORE_FOLDER);
 
     int files_length = ARRAY_SIZE(file_names);
 
     Nob_String_Builder sb = {0};
     for (int i = 0; i < files_length; i++) {
         const char *file_name = file_names[i];
-        nob_sb_appendf(&sb, TEST_OUT"swimd_scenarios_file_scanning/%s", file_name);
+        nob_sb_appendf(&sb, FILE_SCORE_FOLDER"/%s", file_name);
         nob_sb_append_null(&sb);
         nob_write_entire_file(sb.items, NULL, 0);
         sb.count = 0;
     }
-    swimd_scanner_scanners_setup_path(TEST_OUT"swimd_scenarios_file_scanning");
+    swimd_scanner_scanners_setup_path(FILE_SCORE_FOLDER);
     SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
     swimd_mre_wait(&scanner->scan_finished);
 
@@ -219,12 +221,54 @@ cleanup:
 
     for (int i = 0; i < files_length; i++) {
         const char *file_name = file_names[i];
-        nob_sb_appendf(&sb, TEST_OUT"swimd_scenarios_file_scanning/%s", file_name);
+        nob_sb_appendf(&sb, FILE_SCORE_FOLDER"/%s", file_name);
         nob_sb_append_null(&sb);
         nob_delete_file(sb.items);
         sb.count = 0;
     }
-    nob_delete_file(TEST_OUT"swimd_scenarios_file_scanning");
+    nob_delete_file(FILE_SCORE_FOLDER);
+
+    nob_sb_free(sb);
+}
+
+#define LONG_NAME_FOLDER TEST_OUT"swimd_scenarios_long_path"
+
+static void swimd_scenarios_long_name(SwimdCunitTestResult *test_result) {
+    swimd_scanner_global_init("swimd.log");
+    swimd_scanner_scanners_glob_init();
+
+    nob_mkdir_if_not_exists(LONG_NAME_FOLDER);
+
+    char long_name[SCANNER_MAX_NAME_LENGTH + 1];
+    for (int i = 0; i < SCANNER_MAX_NAME_LENGTH; i++) {
+        long_name[i] = 'a';
+    }
+    long_name[SCANNER_MAX_NAME_LENGTH] = '\0';
+
+    Nob_String_Builder sb = {0};
+    nob_sb_appendf(&sb, LONG_NAME_FOLDER"/%s", long_name);
+    nob_sb_append_null(&sb);
+
+    nob_write_entire_file(sb.items, NULL, 0);
+
+    swimd_scanner_scanners_setup_path(TEST_OUT"swimd_scenarios_long_path");
+    SwimdScanner *scanner = &swimd_scanner_scanners[SCANNER_FILES];
+    swimd_mre_wait(&scanner->scan_finished);
+
+    SwimdScannerProcessInputResult input_result = {0};
+
+    swimd_scanner_scan_process_input(long_name, 10, &input_result, scanner);
+    if (input_result.items_length != 1) {
+        swimd_cunit_fail(test_result, "No file long file in the result");
+    }
+    swimd_scanner_scan_process_input_free(&input_result);
+
+cleanup:
+    swimd_scanner_scan_process_input_free(&input_result);
+    swimd_scanner_shutdown();
+
+    nob_delete_file(sb.items);
+    nob_delete_file(LONG_NAME_FOLDER);
 
     nob_sb_free(sb);
 }

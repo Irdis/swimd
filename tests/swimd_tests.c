@@ -12,7 +12,8 @@
 
 static SwimdCunitTest swimd_tests[] = {
     { .name = "swimd_scenarios_watch", .fn = &swimd_scenarios_watch },
-    { .name = "swimd_scenarios_file_scanning", .fn = &swimd_scenarios_file_scanning }
+    { .name = "swimd_scenarios_file_scanning", .fn = &swimd_scenarios_file_scanning },
+    { .name = "swimd_scenarios_long_name", .fn = &swimd_scenarios_long_name }
 };
 
 int main() {
